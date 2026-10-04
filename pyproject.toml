@@ -22,7 +22,19 @@ classifiers = [
 sdk = ["claude-agent-sdk>=0.2"]
 # Tool sets: one extra per tool set, holding only what that tool set needs
 clock = ["tzdata; sys_platform == 'win32'"]
-all = ["ai-armory[sdk,clock]"]
+# The Google tool sets share one sign-in and one set of client libraries
+google = [
+    "google-api-python-client>=2.100",
+    "google-auth>=2.20",
+    "google-auth-oauthlib>=1.0",
+    "tzdata; sys_platform == 'win32'",
+]
+gmail = ["ai-armory[google]"]
+calendar = ["ai-armory[google]"]
+chat = ["ai-armory[google]"]
+docs = ["ai-armory[google]"]
+sheets = ["ai-armory[google]"]
+all = ["ai-armory[sdk,clock,google]"]
 dev = ["pytest>=8", "anyio>=4", "ai-armory[all]"]
 
 [project.scripts]

@@ -18,7 +18,7 @@ def main(argv: list[str] | None = None) -> int:
     serve.add_argument(
         "--toolsets",
         default="all",
-        help="comma-separated tool set names, or 'all' (default)",
+        help="comma-separated tool set or group names (e.g. google), or 'all' (default)",
     )
     serve.add_argument("--name", default="ai-armory", help="server name reported to the client")
     args = parser.parse_args(argv)
@@ -31,6 +31,8 @@ def main(argv: list[str] | None = None) -> int:
                 print(f"{name}: not installed (pip install 'ai-armory[{name}]')")
                 continue
             print(f"{name}: {ts.description} [{', '.join(t.name for t in ts.tools)}]")
+        for name, members in registry.GROUPS.items():
+            print(f"{name}: a group of {', '.join(members)}")
         return 0
 
     # stdout belongs to the MCP protocol, so messages go to stderr
