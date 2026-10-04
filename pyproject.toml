@@ -1,0 +1,35 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "ai-armory"
+version = "0.1.0"
+description = "A collection of MCP tool sets, usable in-process with the Claude Agent SDK or as a standalone stdio MCP server."
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "Anil Meena" }]
+requires-python = ">=3.11"
+dependencies = ["mcp>=2"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Operating System :: OS Independent",
+]
+
+[project.optional-dependencies]
+# Host adapters
+sdk = ["claude-agent-sdk>=0.2"]
+# Tool sets: one extra per tool set, holding only what that tool set needs
+clock = ["tzdata; sys_platform == 'win32'"]
+all = ["ai-armory[sdk,clock]"]
+dev = ["pytest>=8", "anyio>=4", "ai-armory[all]"]
+
+[project.scripts]
+ai-armory = "ai_armory.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/ai_armory"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

@@ -1,0 +1,27 @@
+# Bytecode and builds
+__pycache__/
+*.py[cod]
+build/
+dist/
+*.egg-info/
+
+# Environments
+.venv/
+venv/
+.env
+
+# Tooling caches
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Local Claude Code state
+.claude/settings.local.json
+.claude/.cc-writes
+
+# Editors and OS
+.idea/
+.vscode/
+.DS_Store
