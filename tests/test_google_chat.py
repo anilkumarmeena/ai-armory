@@ -6,6 +6,7 @@ from datetime import datetime, timedelta, timezone
 import pytest
 from google_fakes import http_error, write_token
 
+import ai_armory
 from ai_armory.toolsets.google import approve, chat, common, gmail, pending
 from ai_armory.toolsets.google.common import CHAT_CREATE, CHAT_MARK, CHAT_READ, CHAT_SCOPES, SCOPES
 
@@ -87,7 +88,9 @@ class World:
             found = [dict(m) for m in self.messages.get(kw["parent"], [])]
             if "thread.name" in (kw.get("filter") or ""):
                 found = [m for m in found if m["thread"]["name"] in kw["filter"]]
-            return {"messages": found[: kw.get("pageSize", 25)]}
+            start = int(kw.get("pageToken") or 0)
+            end = start + kw.get("pageSize", 25)
+            return {"messages": found[start:end], **({"nextPageToken": str(end)} if end < len(found) else {})}
         if method == "spaces.messages.search":
             if isinstance(self.search, Exception):
                 raise self.search
@@ -293,6 +296,101 @@ def test_search_uses_chats_own_search_and_else_searches_itself(world):
     result = chat.chat_search("PLAYER fix")
     assert [m["text"] for m in result["messages"]] == ["@Sam please review the player fix"]
     assert "the tool searched the last 7 days of the 20 most active spaces itself" in result["notes"][0]
+
+
+def test_the_search_tool_keeps_its_name_description_and_inputs(google_accounts):
+    tool = next(t for t in ai_armory.load("chat").tools if t.name == "chat_search")
+    assert tool.read_only and not tool.needs_confirmation
+    assert tool.description == (
+        "Search the user's Google Chat messages for words, newest first, across their spaces and DMs or in one space. "
+        "Uses Chat's own search where the account has it; otherwise the tool matches the words itself over the recent "
+        "messages of the 20 most active spaces, which can miss older or quieter ones, and the note says so.")
+    props = tool.input_schema["properties"]
+    assert set(props) == {"query", "account", "days", "space"} and tool.input_schema["required"] == ["query"]
+    assert props["account"]["default"] == "all" and props["days"]["description"] == "How far back, 1 to 30. Default 7."
+    assert props["space"]["description"].startswith("Only this space: A space id (spaces/...)")
+
+
+def test_chats_own_search_looks_back_at_most_30_days_across_every_space(world):
+    world.search = [world.messages["spaces/OPS"][0]]
+    result = chat.chat_search('deploy "done"', days=100)
+    called = world.called("spaces.messages.search")[0]
+    assert called["parent"] == "spaces/-" and called["body"]["pageSize"] == chat.PAGE
+    since = chat._time(called["body"]["filter"].split('create_time >= "')[1].split('"')[0])
+    assert abs((NOW - timedelta(days=30) - since).total_seconds()) < 60
+    assert result == {"messages": [{"account": "work", "space": "spaces/OPS", "name": "Platform Ops", "from": "someone",
+                                    "time": chat._local(ago(60)), "text": "Deploy done", "thread": "spaces/OPS/threads/t4"}]}
+
+
+def test_search_in_one_space_names_it(world):
+    chat.chat_search("review", space="platform dev")
+    assert world.called("spaces.messages.search")[0]["body"]["filter"].endswith(' AND space.name = "spaces/DEV"')
+
+
+def test_search_needs_words():
+    with pytest.raises(ValueError, match="Nothing to search for"):
+        chat.chat_search(' "" ')
+
+
+@pytest.mark.parametrize("error", [http_error(400, "Invalid argument"),
+                                   http_error(403, "The caller does not have permission")])
+def test_when_chats_search_is_refused_the_tool_searches_itself(world, error):
+    world.search = error
+    result = chat.chat_search("deploy")
+    assert [m["text"] for m in result["messages"]] == ["Deploy done"]
+    assert "Chat's own search wasn't available" in result["notes"][0]
+
+
+def test_a_cloud_project_problem_with_chats_search_is_said_not_searched_around(world):
+    world.search = http_error(403, "Google Chat API has not been used in project 123 before or it is disabled.")
+    with pytest.raises(chat.ChatUnavailable, match="turned off in the Google Cloud project"):
+        chat.chat_search("deploy")
+    assert world.called("spaces.messages.list") == []
+
+
+def busy(space, count, text=lambda n: f"chatter {n}"):
+    """`count` messages in `space`, newest first, a minute apart."""
+    return [message(space, n, "users/3", text(n), 1 + n / 60) for n in range(count)]
+
+
+def test_the_tools_own_search_reads_a_busy_space_back_through_its_whole_window(world):
+    world.search = http_error(400, "Invalid argument")
+    world.messages["spaces/DEV"] = busy("spaces/DEV", 1500, lambda n: "the old rollout plan" if n == 1499 else "chatter")
+    result = chat.chat_search("rollout")
+    assert [m["text"] for m in result["messages"]] == ["the old rollout plan"] and "in full" not in result["notes"][0]
+    pages = [kw for kw in world.called("spaces.messages.list") if kw["parent"] == "spaces/DEV"]
+    assert [(kw["pageSize"], kw["pageToken"]) for kw in pages] == [(1000, None), (1000, "1000")]
+
+
+def test_the_tools_own_search_stops_reading_a_space_once_it_has_enough(world):
+    world.search = http_error(400, "Invalid argument")
+    world.messages["spaces/DEV"] = busy("spaces/DEV", 2500, lambda n: f"ping {n}")
+    result = chat.chat_search("ping")
+    assert len(result["messages"]) == chat.PAGE and result["messages"][0]["text"] == "ping 0"
+    assert len([kw for kw in world.called("spaces.messages.list") if kw["parent"] == "spaces/DEV"]) == 1
+    assert "in full" not in result["notes"][0]
+
+
+def test_the_tools_own_search_says_when_spaces_couldnt_be_read_in_full(world):
+    world.search = http_error(400, "Invalid argument")
+    world.messages["spaces/DEV"] = busy("spaces/DEV", chat.SCAN_PAGE * chat.SCAN_PAGES + 1)
+    world.fail["spaces.messages.list:spaces/DM1"] = http_error(500, "backend error")
+    result = chat.chat_search("deploy")
+    assert [m["text"] for m in result["messages"]] == ["Deploy done"]  # the other spaces still searched
+    assert len([kw for kw in world.called("spaces.messages.list") if kw["parent"] == "spaces/DEV"]) == chat.SCAN_PAGES
+    assert result["notes"][0].endswith("2 of them couldn't be read in full, so some matches may be missing.")
+    result = chat.chat_search("deploy", space="spaces/DEV")
+    assert result["messages"] == []
+    assert result["notes"][0].endswith("the last 7 days of that space itself. It couldn't be read in full, so some "
+                                       "matches may be missing.")
+
+
+def test_the_tools_own_search_skips_spaces_quiet_for_longer_than_the_window(world):
+    world.search = http_error(400, "Invalid argument")
+    chat.chat_search("deploy", days=7)
+    assert "spaces/OLD" not in {kw["parent"] for kw in world.called("spaces.messages.list")}
+    chat.chat_search("deploy", days=14)
+    assert "spaces/OLD" in {kw["parent"] for kw in world.called("spaces.messages.list")}
 
 
 def test_marking_read_sets_each_spaces_read_time(world):

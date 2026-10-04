@@ -38,6 +38,8 @@ specs = Specs()
 
 MAX_SPACES = 20  # the most recently active spaces that unread and the tool's own search look at
 PAGE = 25  # unread messages fetched per space; more shows as 25+
+SCAN_PAGE = 1000  # the most messages Chat lists in one call, which the tool's own search asks for
+SCAN_PAGES = 3  # calls the tool's own search makes at most per space, so up to 3,000 of its messages
 TEXT_CHARS = 500
 DRAFT_CHARS = 1500  # a draft may be read aloud in full before it's sent
 NOTIFICATIONS = "chat-noreply@google.com"  # the sender of Chat's email notifications
@@ -890,22 +892,32 @@ def chat_read(space: str, account: str = "", hours: int = 24, max_messages: int 
     return result
 
 
-def _scan(label: str, chat, words: list[str], since: datetime, target: dict | None) -> list[dict]:
-    """The tool's own search: recent messages in one space, or the most active ones, that hold every word."""
+def _scan(label: str, chat, words: list[str], since: datetime, target: dict | None) -> tuple[list[dict], int]:
+    """The tool's own search: the messages since `since` in one space, or in the most active ones, that hold every
+    word, ignoring case; and how many of those spaces it couldn't read back to `since`. Each space is read newest
+    first, as many messages a call as Chat allows, until its window is done, it has given PAGE matches (any older
+    ones would be cut), or SCAN_PAGES calls."""
     spaces = [target] if target else [s for s in _spaces(chat) if _time(s.get("lastActiveTime")) >= since][:MAX_SPACES]
+    wanted = [w.casefold() for w in words]
 
-    def look(space: dict) -> list[dict]:
+    def look(space: dict) -> tuple[list[dict], bool]:
+        found, token = [], None
         try:
-            return _chat(label, CHAT_READ).spaces().messages().list(
-                parent=space["name"], filter=f'createTime > "{_rfc3339(since)}"', orderBy="createTime desc",
-                pageSize=100).execute().get("messages", [])
+            messages = _chat(label, CHAT_READ).spaces().messages()
+            for _ in range(SCAN_PAGES):
+                page = messages.list(parent=space["name"], filter=f'createTime > "{_rfc3339(since)}"',
+                                     orderBy="createTime desc", pageSize=SCAN_PAGE, pageToken=token).execute()
+                found += [m for m in page.get("messages", [])
+                          if all(w in (m.get("text") or "").casefold() for w in wanted)]
+                if len(found) >= PAGE or not (token := page.get("nextPageToken")):
+                    return found, True
         except Exception as e:
             log.warning("couldn't search Chat space %s: %s", space.get("name"), e)
-            return []
+        return found, False
 
     with ThreadPoolExecutor(max(1, min(8, len(spaces)))) as pool:
-        found = [m for messages in pool.map(look, spaces) for m in messages]
-    return [m for m in found if all(w.lower() in (m.get("text") or "").lower() for w in words)]
+        looked = list(pool.map(look, spaces))
+    return [m for found, _ in looked for m in found], sum(not whole for _, whole in looked)
 
 
 def _search(label: str, words: list[str], days: int, space: str) -> tuple[list[dict], str]:
@@ -930,9 +942,12 @@ def _search(label: str, words: list[str], days: int, space: str) -> tuple[list[d
         messages = None
     if messages is None:
         with _errors(label, CHAT_READ):
-            messages = _scan(label, chat, words, since, target)
+            messages, partly = _scan(label, chat, words, since, target)
         note = (f"Chat's own search wasn't available, so the tool searched the last {days} days of "
                 f"{'that space' if target else f'the {MAX_SPACES} most active spaces'} itself.")
+        if partly:
+            note += (f" {'It' if target else f'{partly} of them'} couldn't be read in full, so some matches "
+                     "may be missing.")
     messages = sorted(messages, key=lambda m: _time(m.get("createTime")), reverse=True)[:PAGE]
     spaces = {target["name"]: target} if target else {}
 
