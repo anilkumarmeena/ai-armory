@@ -24,6 +24,7 @@ BUILTIN: dict[str, str] = {
     "chat": "ai_armory.toolsets.google.chat",
     "docs": "ai_armory.toolsets.google.docs",
     "sheets": "ai_armory.toolsets.google.sheets",
+    "mac": "ai_armory.toolsets.mac",
 }
 
 # Names that stand for several tool sets at once. They aren't tool sets themselves, so serving "all" never loads
