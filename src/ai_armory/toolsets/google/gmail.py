@@ -6,7 +6,9 @@ Nothing here sends, trashes or deletes mail: drafts wait in Drafts for the user 
 from __future__ import annotations
 
 import base64
+import re
 from email.message import EmailMessage
+from html.parser import HTMLParser
 
 from ai_armory.toolsets.google import common
 from ai_armory.toolsets.google.common import (ACCOUNT, ACCOUNT_OR_ALL, GMAIL_COMPOSE, GMAIL_MODIFY, Specs, across,
@@ -15,8 +17,12 @@ from ai_armory.toolsets.google.common import (ACCOUNT, ACCOUNT_OR_ALL, GMAIL_COM
 specs = Specs()
 
 
+def _part_header(part: dict, name: str) -> str:
+    return next((h["value"] for h in part.get("headers", []) if h["name"].lower() == name.lower()), "")
+
+
 def _header(msg: dict, name: str) -> str:
-    return next((h["value"] for h in msg["payload"].get("headers", []) if h["name"].lower() == name.lower()), "")
+    return _part_header(msg["payload"], name)
 
 
 @specs.tool(
@@ -56,10 +62,101 @@ def gmail_search(query: str, account: str = "all", max_results: int = 10) -> lis
     return noted("messages", *across(account, read))
 
 
-def _plain_text(part: dict) -> str:
-    if part.get("mimeType") == "text/plain" and part.get("body", {}).get("data"):
-        return base64.urlsafe_b64decode(part["body"]["data"]).decode(errors="replace")
-    return "".join(_plain_text(p) for p in part.get("parts", []))
+def _part_text(part: dict, mime: str, attachment) -> str:
+    """The text of every `mime` part under `part`, each decoded with its own charset.
+
+    Gmail leaves a large body out of the message and gives an attachmentId instead; attachment(id) fetches it.
+    Attached files (parts with a filename) aren't the message's text, so they're skipped.
+    """
+    if part.get("mimeType") == mime and not part.get("filename"):
+        body = part.get("body", {})
+        data = body.get("data") or (body.get("attachmentId") and attachment(body["attachmentId"]))
+        if data:
+            raw = base64.urlsafe_b64decode(data)
+            charset = re.search(r'charset\s*=\s*"?([^";\s]+)', _part_header(part, "Content-Type"), re.I)
+            try:
+                return raw.decode(charset[1] if charset else "utf-8", errors="replace")
+            except LookupError:  # a charset Python doesn't know
+                return raw.decode(errors="replace")
+    return "".join(_part_text(p, mime, attachment) for p in part.get("parts", []))
+
+
+class _HTMLText(HTMLParser):
+    """Readable text from an email's HTML: lines for blocks, " | " between table cells, and nothing hidden."""
+
+    SKIP = {"script", "style", "head", "title"}
+    LINES = {"br", "p", "div", "tr", "li", "table", "h1", "h2", "h3", "h4", "h5", "h6"}
+    VOID = {"area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "source", "track", "wbr"}
+
+    def __init__(self):
+        super().__init__(convert_charrefs=True)
+        self.out: list[str] = []
+        self.hiding: list[str] = []  # tags open since a hidden element started
+        self.line_has_text = self.cell_gap = False
+        self.link: tuple[str, int] | None = None  # href, and where its text starts in out
+
+    def newline(self) -> None:
+        if self.out and not self.out[-1].endswith("\n"):
+            self.out.append("\n")
+        self.line_has_text = self.cell_gap = False
+
+    def handle_starttag(self, tag: str, attrs: list) -> None:
+        a = {k: v or "" for k, v in attrs}
+        if tag == "body":  # an unclosed <head> ends here
+            self.hiding.clear()
+        if self.hiding or tag in self.SKIP or re.search(r"display\s*:\s*none", a.get("style", ""), re.I):
+            if tag not in self.VOID:
+                self.hiding.append(tag)
+        elif tag in self.LINES:
+            self.newline()
+        elif tag in ("td", "th"):
+            self.cell_gap = self.line_has_text
+        elif tag == "a" and a.get("href"):
+            self.link = (a["href"].strip(), len(self.out))
+        elif tag == "img" and a.get("alt") and not {a.get("width"), a.get("height")} & {"0", "1", "0px", "1px"}:
+            self.handle_data(a["alt"])  # tracking pixels are 1x1 and dropped
+
+    def handle_endtag(self, tag: str) -> None:
+        if self.hiding:
+            if tag in self.hiding:
+                del self.hiding[len(self.hiding) - 1 - self.hiding[::-1].index(tag):]
+        elif tag in self.LINES:
+            self.newline()
+        elif tag == "a" and self.link:
+            url, start = self.link
+            self.link = None
+            text = "".join(self.out[start:]).strip().removeprefix("| ").rstrip("/")  # a link may start a cell
+            shown = (url.rstrip("/"), re.sub(r"^(https?://|mailto:)", "", url).rstrip("/"))
+            if text and url.startswith(("http", "mailto:")) and len(url) <= 200 and text not in shown:
+                self.out.append(f" ({url})")
+
+    def handle_data(self, data: str) -> None:
+        if self.hiding:
+            return
+        text = re.sub(r"\s+", " ", data)
+        if not text.strip():
+            if self.out and not self.out[-1].endswith(("\n", " ")):
+                self.out.append(" ")
+            return
+        if self.cell_gap:
+            self.out.append(" | ")
+            self.cell_gap = False
+        self.out.append(text)
+        self.line_has_text = True
+
+
+def _html_text(html: str) -> str:
+    parser = _HTMLText()
+    parser.feed(html)
+    parser.close()
+    return "".join(parser.out)
+
+
+def _tidy(text: str) -> str:
+    """Runs of spaces become one, and runs of blank lines one blank line; invisible padding characters go."""
+    text = re.sub(r"[­͏​-‍⁠﻿]", "", text)
+    lines = (re.sub(r"[^\S\n]+", " ", line).strip() for line in text.splitlines())
+    return re.sub(r"\n{3,}", "\n\n", "\n".join(lines)).strip()
 
 
 @specs.tool(
@@ -71,10 +168,17 @@ def _plain_text(part: dict) -> str:
     read_only=True,
 )
 def gmail_read(account: str, message_id: str) -> dict:
-    m = common.service(account, "gmail", "v1").users().messages().get(userId="me", id=message_id, format="full").execute()
-    body = _plain_text(m["payload"]) or m.get("snippet", "")
+    gmail = common.service(account, "gmail", "v1").users().messages()
+    m = gmail.get(userId="me", id=message_id, format="full").execute()
+
+    def attachment(attachment_id: str) -> str:
+        return gmail.attachments().get(userId="me", messageId=message_id, id=attachment_id).execute().get("data", "")
+
+    body = (_part_text(m["payload"], "text/plain", attachment)
+            or _html_text(_part_text(m["payload"], "text/html", attachment))
+            or m.get("snippet", ""))
     return {"from": _header(m, "From"), "to": _header(m, "To"), "subject": _header(m, "Subject"),
-            "date": _header(m, "Date"), "body": body[:8000]}
+            "date": _header(m, "Date"), "body": _tidy(body)[:8000]}
 
 
 @specs.tool(
