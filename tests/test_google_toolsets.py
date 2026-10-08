@@ -12,19 +12,26 @@ from ai_armory.toolsets.google import approve, common, drafts, pending
 from ai_armory.toolsets.google.settings import Account, GoogleSettings, configure, current
 
 ALL = {
-    "gmail_search", "gmail_read", "gmail_create_draft", "gmail_modify",
-    "calendar_events", "calendar_create_event", "calendar_draft_invite", "calendar_send_invite",
+    "gmail_search", "gmail_read", "gmail_create_draft", "gmail_modify", "gmail_draft_send", "gmail_draft_reply",
+    "gmail_send",
+    "calendar_events", "calendar_event", "calendar_free_time", "calendar_create_event", "calendar_draft_invite",
+    "calendar_send_invite", "calendar_update_event", "calendar_draft_update", "calendar_send_update",
+    "calendar_draft_respond", "calendar_send_response", "calendar_draft_delete", "calendar_delete_event",
     "chat_unread", "chat_spaces", "chat_read", "chat_search", "chat_mark_read", "chat_draft", "chat_send",
     "docs_search", "docs_read", "docs_beautify", "docs_format", "docs_replace_text", "docs_insert",
     "docs_draft_delete", "docs_delete", "docs_insert_image",
     "sheets_search", "sheets_read", "sheets_write", "sheets_append", "sheets_add_tab", "sheets_draft_delete_tab",
     "sheets_delete_tab", "sheets_format",
+    "slides_search", "slides_read", "drive_search",
 }
-READ_ONLY = {"gmail_search", "gmail_read", "calendar_events", "calendar_draft_invite", "chat_unread", "chat_spaces",
-             "chat_read", "chat_search", "chat_draft", "docs_search", "docs_read", "docs_draft_delete",
-             "sheets_search", "sheets_read", "sheets_draft_delete_tab"}
+READ_ONLY = {"gmail_search", "gmail_read", "gmail_draft_send", "gmail_draft_reply", "calendar_events",
+             "calendar_event", "calendar_free_time", "calendar_draft_invite", "calendar_draft_update",
+             "calendar_draft_respond", "calendar_draft_delete", "chat_unread", "chat_spaces", "chat_read",
+             "chat_search", "chat_draft", "docs_search", "docs_read", "docs_draft_delete", "sheets_search",
+             "sheets_read", "sheets_draft_delete_tab", "slides_search", "slides_read", "drive_search"}
 # Everything that sends or deletes: each takes only a draft_id, and is gated by the host.
-CONFIRMED = {"calendar_send_invite", "chat_send", "docs_delete", "sheets_delete_tab"}
+CONFIRMED = {"gmail_send", "calendar_send_invite", "calendar_send_update", "calendar_send_response",
+             "calendar_delete_event", "chat_send", "docs_delete", "sheets_delete_tab"}
 
 
 # ── Settings ────────────────────────────────────────────────────
@@ -97,10 +104,10 @@ def test_nothing_personal_or_host_specific_is_built_in():
 # ── Loading and metadata ────────────────────────────────────────
 
 def test_each_sub_set_loads_alone_and_the_google_group_loads_them_all(google_accounts):
-    assert {"gmail", "calendar", "chat", "docs", "sheets"} <= set(ai_armory.available())
+    assert {"gmail", "calendar", "chat", "docs", "sheets", "slides", "drive"} <= set(ai_armory.available())
     assert "google" not in ai_armory.available()  # a group, so serving "all" never loads its tools twice
     names = [ts.name for ts in ai_armory.load_many(["google"])]
-    assert names == ["gmail", "calendar", "chat", "docs", "sheets"]
+    assert names == ["gmail", "calendar", "chat", "docs", "sheets", "slides", "drive"]
     assert {t.name for ts in ai_armory.load_many(["google"]) for t in ts.tools} == ALL
     assert [ts.name for ts in ai_armory.load_many(["gmail", "google"])] == names  # each once, so no clash
     assert [ts.name for ts in ai_armory.load_many(["sheets", "google"])][:2] == ["sheets", "gmail"]

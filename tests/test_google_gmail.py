@@ -9,9 +9,10 @@ import pytest
 from google_fakes import Services, http_error, write_token
 from googleapiclient.errors import HttpError
 
-from ai_armory.toolsets.google import common
+from ai_armory.toolsets.google import approve, common, pending
 from ai_armory.toolsets.google.common import GMAIL_MODIFY, SCOPES
-from ai_armory.toolsets.google.gmail import (gmail_create_draft, gmail_modify, gmail_read, gmail_search)
+from ai_armory.toolsets.google.gmail import (gmail_create_draft, gmail_draft_reply, gmail_draft_send, gmail_modify,
+                                             gmail_read, gmail_search, gmail_send)
 
 LABELS = [
     {"id": "INBOX", "name": "INBOX", "type": "system"},
@@ -171,6 +172,111 @@ def test_a_draft_is_saved_never_sent(gmail):
     sent = message_from_bytes(base64.urlsafe_b64decode(raw))
     assert sent["To"] == "ana@example.com" and sent["Subject"] == "Lunch"
     assert "send" not in {name.split("(")[0].split(".")[-1] for name, _a, _k in users.mock_calls}
+
+
+# ── Sending and replying ────────────────────────────────────────
+
+ORIGINAL = {"id": "m1", "threadId": "t1", "payload": {"headers": [
+    {"name": "From", "value": "Ana Rao <ana@example.com>"},
+    {"name": "To", "value": "me@example.com, Bo <bo@example.com>"},
+    {"name": "Cc", "value": "cy@example.com"},
+    {"name": "Subject", "value": "Budget"},
+    {"name": "Message-ID", "value": "<m1@mail.example>"},
+    {"name": "References", "value": "<m0@mail.example>"},
+    {"name": "Date", "value": "Mon, 5 Oct 2026 09:00:00 +0000"},
+]}}
+
+
+def _original(gmail, label="work", **headers):
+    """The email being answered, with any header changed: from=..., subject=..."""
+    message = {**ORIGINAL, "payload": {"headers": [
+        {"name": h["name"], "value": headers.get(h["name"].replace("-", "_").lower(), h["value"])}
+        for h in ORIGINAL["payload"]["headers"]]}}
+    messages(gmail.users(label)).get.return_value.execute.return_value = message
+
+
+def _sent(gmail, label="work"):
+    body = messages(gmail.users(label)).send.call_args.kwargs["body"]
+    return body, message_from_bytes(base64.urlsafe_b64decode(body["raw"]))
+
+
+def test_an_email_is_drafted_then_sent_only_once_approved(gmail):
+    drafted = gmail_draft_send("work", "Ana Rao <ana@example.com>, bo@example.com", "Lunch", "Tomorrow at one?",
+                               cc="cy@example.com", bcc="dee@example.com, ana@example.com")
+    assert gmail.opened == []  # drafting touches nothing
+    assert drafted["summary"] == ("Email to Ana Rao (ana@example.com), bo@example.com, cc cy@example.com, bcc "
+                                  "dee@example.com, subject 'Lunch', from the work account: Tomorrow at one?")
+    assert pending(drafted["draft_id"]).summary == drafted["summary"]
+    assert pending(drafted["draft_id"]).short == "email to Ana Rao and 3 more: Lunch"
+
+    with pytest.raises(PermissionError):
+        gmail_send(drafted["draft_id"])
+    assert gmail.opened == []
+    approve(drafted["draft_id"])
+    assert gmail_send(drafted["draft_id"]) == "Sent to Ana Rao <ana@example.com>, bo@example.com."
+    body, sent = _sent(gmail)
+    assert "threadId" not in body
+    assert (sent["To"], sent["Cc"], sent["Bcc"], sent["Subject"]) == (
+        "Ana Rao <ana@example.com>, bo@example.com", "cy@example.com", "dee@example.com", "Lunch")
+    assert sent.get_payload().strip() == "Tomorrow at one?"
+    with pytest.raises(ValueError, match="no draft"):
+        gmail_send(drafted["draft_id"])  # once only
+
+
+def test_a_reply_goes_in_its_thread_to_the_sender(gmail):
+    _original(gmail)
+    drafted = gmail_draft_reply("work", "m1", "Looks good to me")
+    get = messages(gmail.users()).get.call_args.kwargs
+    assert get["id"] == "m1" and get["format"] == "metadata" and "Message-ID" in get["metadataHeaders"]
+    assert drafted["to"] == "Ana Rao <ana@example.com>" and drafted["subject"] == "Re: Budget"
+    assert drafted["summary"] == ("Email to Ana Rao (ana@example.com), subject 'Re: Budget', as a reply to Ana "
+                                  "Rao's email, in its thread, from the work account: Looks good to me.")
+    approve(drafted["draft_id"])
+    assert gmail_send(drafted["draft_id"]) == "Sent to Ana Rao <ana@example.com>, in the thread 'Re: Budget'."
+    body, sent = _sent(gmail)
+    assert body["threadId"] == "t1"
+    assert sent["In-Reply-To"] == "<m1@mail.example>"
+    assert sent["References"] == "<m0@mail.example> <m1@mail.example>"
+    assert sent["Subject"] == "Re: Budget" and sent["Cc"] is None
+
+
+def test_reply_all_copies_everyone_else_but_the_user(gmail):
+    _original(gmail, subject="RE: Budget")
+    drafted = gmail_draft_reply("work", "m1", "Thanks all.", reply_all=True, cc="dee@example.com",
+                                bcc="boss@example.com")
+    assert drafted["to"] == "Ana Rao <ana@example.com>"
+    assert drafted["cc"] == "Bo <bo@example.com>, cy@example.com, dee@example.com"
+    assert drafted["bcc"] == "boss@example.com" and drafted["subject"] == "RE: Budget"
+    assert "me@example.com" not in drafted["summary"] and "bcc boss@example.com" in drafted["summary"]
+
+
+def test_a_reply_to_the_users_own_email_goes_to_the_people_it_went_to(gmail):
+    _original(gmail, **{"from": "Me <me@example.com>", "to": "ana@example.com"})
+    assert gmail_draft_reply("work", "m1", "Any news?")["to"] == "ana@example.com"
+
+
+@pytest.mark.parametrize("call, error", [
+    (lambda: gmail_draft_send("work", "ana", "Hi", "Hello"), "Not an email address: ana"),
+    (lambda: gmail_draft_send("work", "", "Hi", "Hello"), "Nobody to send it to"),
+    (lambda: gmail_draft_send("work", "ana@example.com", "Hi", "  "), "The email is empty"),
+    (lambda: gmail_draft_send("work", "ana@example.com", "", "Hello"), "needs a subject"),
+    (lambda: gmail_draft_send("work", "ana@example.com", "Hi", "x" * 1501), "gmail_create_draft"),
+])
+def test_bad_emails_are_refused_before_anything_is_drafted(gmail, call, error):
+    with pytest.raises(ValueError, match=error):
+        call()
+    assert gmail.opened == []
+
+
+def test_a_saved_draft_can_be_a_reply_in_its_thread_with_cc(gmail):
+    _original(gmail)
+    said = gmail_create_draft("work", body="Will do.", reply_to="m1", cc="cy@example.com")
+    assert said == "Draft to Ana Rao <ana@example.com> as a reply in its thread saved in the work account's Drafts."
+    message = gmail.users().drafts.return_value.create.call_args.kwargs["body"]["message"]
+    saved = message_from_bytes(base64.urlsafe_b64decode(message["raw"]))
+    assert message["threadId"] == "t1" and saved["In-Reply-To"] == "<m1@mail.example>"
+    assert saved["Subject"] == "Re: Budget" and saved["Cc"] == "cy@example.com"
+    assert not messages(gmail.users()).send.called
 
 
 # ── Modify ──────────────────────────────────────────────────────

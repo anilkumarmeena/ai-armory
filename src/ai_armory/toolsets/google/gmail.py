@@ -1,6 +1,8 @@
-"""Gmail across the configured accounts: search, read, write drafts, and label, archive or mark mail.
+"""Gmail across the configured accounts: search, read, write drafts, label, archive or mark mail, and send.
 
-Nothing here sends, trashes or deletes mail: drafts wait in Drafts for the user to send themselves.
+Sending, a new email or a reply in its thread, is done in two steps: gmail_draft_send or gmail_draft_reply, then
+gmail_send once the user says yes (see drafts.py). gmail_create_draft instead saves a draft in Gmail's Drafts for the
+user to send themselves. Nothing here trashes or deletes mail.
 """
 
 from __future__ import annotations
@@ -8,13 +10,18 @@ from __future__ import annotations
 import base64
 import re
 from email.message import EmailMessage
+from email.utils import formataddr, getaddresses
 from html.parser import HTMLParser
 
-from ai_armory.toolsets.google import common
+from ai_armory.toolsets.google import common, drafts
 from ai_armory.toolsets.google.common import (ACCOUNT, ACCOUNT_OR_ALL, GMAIL_COMPOSE, GMAIL_MODIFY, Specs, across,
-                                              api_errors, build, noted)
+                                              api_errors, build, noted, settings)
 
 specs = Specs()
+
+DRAFT_CHARS = 1500  # an email sent after a yes is read aloud in full first
+ADDRESSES = {"type": "string", "description": "Email addresses, comma-separated, optionally with names: "
+                                             "'Ana Rao <ana@example.com>, bo@example.com'"}
 
 
 def _part_header(part: dict, name: str) -> str:
@@ -177,25 +184,226 @@ def gmail_read(account: str, message_id: str) -> dict:
     body = (_part_text(m["payload"], "text/plain", attachment)
             or _html_text(_part_text(m["payload"], "text/html", attachment))
             or m.get("snippet", ""))
-    return {"from": _header(m, "From"), "to": _header(m, "To"), "subject": _header(m, "Subject"),
-            "date": _header(m, "Date"), "body": _tidy(body)[:8000]}
+    found = {"from": _header(m, "From"), "to": _header(m, "To"), "subject": _header(m, "Subject"),
+             "date": _header(m, "Date"), "body": _tidy(body)[:8000]}
+    if cc := _header(m, "Cc"):
+        found["cc"] = cc
+    return found
+
+
+# ── Writing: addresses, replies in their thread, drafts and sends ──
+
+def _people(text: str) -> list[tuple[str, str]]:
+    """(name, address) for each address in a comma-separated list, each address once."""
+    seen, found = set(), []
+    for name, address in getaddresses([text or ""]):
+        address = address.strip()
+        if not address:
+            continue
+        if "@" not in address or " " in address:
+            raise ValueError(f"Not an email address: {address}.")
+        if address.lower() not in seen:
+            seen.add(address.lower())
+            found.append((name.strip(), address))
+    return found
+
+
+def _spoken(people: list[tuple[str, str]]) -> str:
+    """Each person as their name and address, so a misheard name shows up when it's read out."""
+    return ", ".join(f"{name} ({address})" if name else address for name, address in people)
+
+
+def _mine(account: str) -> set[str]:
+    """The account's own addresses, left out of a reply-all."""
+    known = settings().get(account)
+    email = known.email if known and known.email else common.account_email(account)
+    return {email.lower()} if email else set()
+
+
+def _re(subject: str) -> str:
+    subject = subject.strip()
+    return subject if re.match(r"re\s*:", subject, re.I) else f"Re: {subject}".strip()
+
+
+def _replying(account: str, message_id: str, reply_all: bool) -> dict:
+    """What a reply to this message needs: its thread, who it goes to, the subject and the threading headers."""
+    gmail = common.service(account, "gmail", "v1").users().messages()
+    m = gmail.get(userId="me", id=message_id.strip(), format="metadata",
+                  metadataHeaders=["From", "To", "Cc", "Reply-To", "Subject", "Message-ID", "References",
+                                   "Date"]).execute()
+    mine = _mine(account)
+    sender = _people(_header(m, "Reply-To") or _header(m, "From"))
+    if sender and sender[0][1].lower() in mine:  # a reply to the user's own email goes to the people it went to
+        sender = _people(_header(m, "To"))
+    to = [p for p in sender if p[1].lower() not in mine]
+    cc = []
+    if reply_all:
+        cc = [p for p in _people(", ".join(filter(None, [_header(m, "To"), _header(m, "Cc")])))
+              if p[1].lower() not in mine]
+    original = _header(m, "Message-ID")
+    references = " ".join(filter(None, [_header(m, "References"), original]))
+    who = (_people(_header(m, "From")) or [("", "someone")])[0]
+    return {"thread_id": m.get("threadId", ""), "to": to, "cc": cc, "subject": _re(_header(m, "Subject")),
+            "in_reply_to": original, "references": references, "about": who[0] or who[1],
+            "date": _header(m, "Date")}
+
+
+def _compose(account: str, to: str, cc: str, bcc: str, subject: str, body: str, reply_to: str = "",
+             reply_all: bool = False) -> tuple[EmailMessage, dict]:
+    """The email, and what to say about it. A reply goes in the thread of `reply_to`, a message id, to its sender
+    (and with `reply_all`, everyone else on it), plus anyone in to, cc and bcc."""
+    if not body.strip():
+        raise ValueError("The email is empty.")
+    thread: dict = {}
+    people = {"to": _people(to), "cc": _people(cc), "bcc": _people(bcc)}
+    if reply_to.strip():
+        thread = _replying(account, reply_to, reply_all)
+        people["to"] = thread["to"] + people["to"]
+        people["cc"] = thread["cc"] + people["cc"]
+        subject = subject.strip() or thread["subject"]
+    seen: set[str] = set()
+    for kind in ("to", "cc", "bcc"):  # everyone once, in the first place they're named
+        kept = []
+        for name, address in people[kind]:
+            if address.lower() not in seen:
+                seen.add(address.lower())
+                kept.append((name, address))
+        people[kind] = kept
+    if not people["to"]:
+        if people["cc"] and thread:
+            people["to"], people["cc"] = people["cc"][:1], people["cc"][1:]
+        else:
+            raise ValueError("Nobody to send it to: give to, or reply_to for a reply.")
+    if not subject.strip():
+        raise ValueError("The email needs a subject.")
+    msg = EmailMessage()
+    msg["To"] = ", ".join(formataddr(p) for p in people["to"])
+    if people["cc"]:
+        msg["Cc"] = ", ".join(formataddr(p) for p in people["cc"])
+    if people["bcc"]:
+        msg["Bcc"] = ", ".join(formataddr(p) for p in people["bcc"])
+    msg["Subject"] = subject.strip()
+    if thread.get("in_reply_to"):
+        msg["In-Reply-To"] = thread["in_reply_to"]
+        msg["References"] = thread["references"]
+    msg.set_content(body.strip())
+    return msg, {**people, "subject": subject.strip(), "thread": thread}
+
+
+def _raw(msg: EmailMessage) -> str:
+    return base64.urlsafe_b64encode(msg.as_bytes()).decode()
 
 
 @specs.tool(
     "create_draft",
-    "Write an email draft for the user to review and send themselves from Gmail. It never sends email.",
-    {"account": ACCOUNT, "to": {"type": "string"}, "subject": {"type": "string"}, "body": {"type": "string"}},
-    ["to", "subject", "body"],
+    "Save an email draft in Gmail's Drafts for the user to review and send themselves from Gmail. It never sends "
+    "email; to send one, use gmail_draft_send or gmail_draft_reply. With reply_to, the draft is a reply in that "
+    "email's thread, to its sender (and with reply_all, everyone on it), with a 'Re:' subject unless one is given.",
+    {"account": ACCOUNT, "to": ADDRESSES, "subject": {"type": "string"}, "body": {"type": "string"},
+     "cc": ADDRESSES, "bcc": ADDRESSES,
+     "reply_to": {"type": "string", "description": "To draft a reply: the message id, from gmail_search, of the "
+                                                   "email it answers"},
+     "reply_all": {"type": "boolean", "description": "With reply_to: also to everyone else on that email. "
+                                                    "Default false."}},
+    ["body"],
 )
-def gmail_create_draft(account: str, to: str, subject: str, body: str) -> str:
-    msg = EmailMessage()
-    msg["To"], msg["Subject"] = to, subject
-    msg.set_content(body)
-    raw = base64.urlsafe_b64encode(msg.as_bytes()).decode()
+def gmail_create_draft(account: str, to: str = "", subject: str = "", body: str = "", cc: str = "", bcc: str = "",
+                       reply_to: str = "", reply_all: bool = False) -> str:
+    msg, about = _compose(account, to, cc, bcc, subject, body, reply_to, reply_all)
+    message = {"raw": _raw(msg)} | ({"threadId": about["thread"]["thread_id"]} if about["thread"] else {})
     gmail = common.service(account, "gmail", "v1")
     with api_errors(account, GMAIL_COMPOSE):
-        gmail.users().drafts().create(userId="me", body={"message": {"raw": raw}}).execute()
-    return f"Draft to {to} saved in the {account} account's Drafts."
+        gmail.users().drafts().create(userId="me", body={"message": message}).execute()
+    where = " as a reply in its thread" if about["thread"] else ""
+    return f"Draft to {msg['To']}{where} saved in the {account} account's Drafts."
+
+
+def _keep(account: str, msg: EmailMessage, about: dict) -> dict:
+    """Keeps a draft for gmail_send: what's sent is exactly this email, read out in full first."""
+    body = msg.get_content().strip()
+    if len(body) > DRAFT_CHARS:
+        raise ValueError(f"That's too long to read aloud before sending: keep it under {DRAFT_CHARS} characters, or "
+                         "save it with gmail_create_draft for the user to send from Gmail.")
+    thread = about["thread"]
+    parts = [f"Email to {_spoken(about['to'])}"]
+    if about["cc"]:
+        parts.append(f"cc {_spoken(about['cc'])}")
+    if about["bcc"]:
+        parts.append(f"bcc {_spoken(about['bcc'])}")
+    parts.append(f"subject '{about['subject']}'")
+    if thread:
+        parts.append(f"as a reply to {thread['about']}'s email, in its thread")
+    parts.append(f"from the {account} account")
+    text = body if body[-1] in ".!?…" else body + "."
+    summary = ", ".join(parts) + f": {text}"
+    everyone = len(about["to"]) + len(about["cc"]) + len(about["bcc"])
+    short = f"email to {about['to'][0][0] or about['to'][0][1]}" + (f" and {everyone - 1} more" if everyone > 1 else "")
+    draft = drafts.keep("gmail_send", account, summary, f"{short}: {about['subject']}",
+                        {"raw": _raw(msg), "thread_id": thread.get("thread_id", ""), "to": msg["To"],
+                         "subject": about["subject"]})
+    shown = {"to": msg["To"], **({"cc": msg["Cc"]} if about["cc"] else {}),
+             **({"bcc": msg["Bcc"]} if about["bcc"] else {}), "subject": about["subject"],
+             **({"in_thread": True} if thread else {}), "body": body}
+    return drafts.reply(draft, "gmail_send", **shown)
+
+
+@specs.tool(
+    "draft_send",
+    "Prepare a new email to send, with cc and bcc if wanted. It sends nothing. Call gmail_send with its draft_id "
+    "to send it: the host reads who it goes to and the exact text to the user, and it's sent only after their clear "
+    "yes. Don't read the draft out or ask for the yes yourself. To answer an email, use gmail_draft_reply instead, "
+    "so the reply stays in its thread. For different wording, make a new draft.",
+    {"account": ACCOUNT, "to": ADDRESSES, "subject": {"type": "string"},
+     "body": {"type": "string", "description": "Exactly what to send, in the user's voice, plain text"},
+     "cc": ADDRESSES, "bcc": ADDRESSES},
+    ["to", "subject", "body"],
+    read_only=True,
+)
+def gmail_draft_send(account: str, to: str, subject: str, body: str, cc: str = "", bcc: str = "") -> dict:
+    msg, about = _compose(account, to, cc, bcc, subject, body)
+    return _keep(account, msg, about)
+
+
+@specs.tool(
+    "draft_reply",
+    "Prepare a reply to an email found with gmail_search, in its thread: to its sender, or with reply_all to "
+    "everyone on it, with a 'Re:' subject and the headers that keep it in the thread. It sends nothing. Call "
+    "gmail_send with its draft_id to send it: the host reads who it goes to and the exact text to the user, and "
+    "it's sent only after their clear yes. Don't read the draft out or ask for the yes yourself.",
+    {"account": ACCOUNT,
+     "message_id": {"type": "string", "description": "The id, from gmail_search, of the email to answer"},
+     "body": {"type": "string", "description": "Exactly what to send, in the user's voice, plain text"},
+     "reply_all": {"type": "boolean", "description": "Also to everyone else on the email. Default false."},
+     "to": {**ADDRESSES, "description": "More people to send it to. Optional."},
+     "cc": {**ADDRESSES, "description": "More people to copy in. Optional."},
+     "bcc": ADDRESSES},
+    ["message_id", "body"],
+    read_only=True,
+)
+def gmail_draft_reply(account: str, message_id: str, body: str, reply_all: bool = False, to: str = "",
+                      cc: str = "", bcc: str = "") -> dict:
+    msg, about = _compose(account, to, cc, bcc, "", body, message_id, reply_all)
+    return _keep(account, msg, about)
+
+
+@specs.tool(
+    "send",
+    "Send an email drafted with gmail_draft_send or gmail_draft_reply, exactly as drafted: it takes only the "
+    "draft_id. It's held until the user has heard the draft and said yes, which the host asks for itself.",
+    {"draft_id": {"type": "string", "description": "From gmail_draft_send or gmail_draft_reply"}},
+    ["draft_id"],
+    needs_confirmation=True,
+)
+def gmail_send(draft_id: str) -> str:
+    d = drafts.take(draft_id, "gmail_send", "gmail_draft_send or gmail_draft_reply")  # sent once at most
+    p = d.payload
+    message = {"raw": p["raw"]} | ({"threadId": p["thread_id"]} if p["thread_id"] else {})
+    gmail = common.service(d.account, "gmail", "v1")
+    with api_errors(d.account, GMAIL_COMPOSE):
+        gmail.users().messages().send(userId="me", body=message).execute()
+    common.log.warning("sent email draft %s from the %s account", d.id, d.account)
+    where = f", in the thread '{p['subject']}'" if p["thread_id"] else ""
+    return f"Sent to {p['to']}{where}."
 
 
 # Labels gmail_modify never adds: TRASH is how Gmail deletes, and SPAM reports the sender.
@@ -295,8 +503,8 @@ def gmail_modify(account: str, message_ids: list[str], read: bool | None = None,
 
 
 def build_toolset():
-    return build("gmail", "Gmail across the configured Google accounts: search, read, draft, label and archive.",
-                 specs)
+    return build("gmail", "Gmail across the configured Google accounts: search, read, draft, label and archive, "
+                          "and send or reply after a yes.", specs)
 
 
 def __getattr__(name: str):

@@ -34,6 +34,8 @@ calendar = ["ai-armory[google]"]
 chat = ["ai-armory[google]"]
 docs = ["ai-armory[google]"]
 sheets = ["ai-armory[google]"]
+slides = ["ai-armory[google]"]
+drive = ["ai-armory[google]"]
 # Runs macOS's own programs (osascript, open, shortcuts), so it needs nothing more
 mac = []
 all = ["ai-armory[sdk,clock,google,mac]"]

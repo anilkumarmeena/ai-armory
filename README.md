@@ -41,6 +41,8 @@ flowchart LR
             chat["💬 chat"]
             docs["📄 docs"]
             sheets["📊 sheets"]
+            slides["🖼️ slides"]
+            drive["🗂️ drive"]
         end
         subgraph MORE["➕ more"]
             mac["🍎 mac"]
@@ -73,7 +75,7 @@ flowchart LR
     classDef host fill:#dcfce7,stroke:#16a34a,stroke-width:2px,color:#052e16
     classDef ext fill:#f1f5f9,stroke:#64748b,stroke-width:2px,stroke-dasharray:5 4,color:#0f172a
 
-    class mac,clock,gmail,calendar,chat,docs,sheets set
+    class mac,clock,gmail,calendar,chat,docs,sheets,slides,drive set
     class registry coreNode
     class sdk,stdio adapter
     class agent,clients host
@@ -96,8 +98,8 @@ flowchart LR
 | Tool set | What it does | Extra |
 |---|---|---|
 | `clock` | Current date and time, in any IANA time zone | `clock` |
-| `gmail` · `calendar` · `chat` · `docs` · `sheets` | Google Workspace across many accounts ([details](#-the-google-tool-sets)) | `google` |
-| `google` *(group)* | All five Google tool sets at once | `google` |
+| `gmail` · `calendar` · `chat` · `docs` · `sheets` · `slides` · `drive` | Google Workspace across many accounts ([details](#-the-google-tool-sets)) | `google` |
+| `google` *(group)* | All seven Google tool sets at once | `google` |
 | `mac` | Notifications, apps and links, Apple Shortcuts and the volume on this Mac ([details](#-the-mac-tool-set)) | `mac` |
 
 ---
@@ -107,14 +109,14 @@ flowchart LR
 ```sh
 pip install -e ".[all]"       # everything
 pip install -e ".[sdk,clock]" # the Agent SDK adapter and the clock tool set
-pip install -e ".[google]"    # the Google tool sets (gmail, calendar, chat, docs, sheets)
+pip install -e ".[google]"    # the Google tool sets (gmail, calendar, chat, docs, sheets, slides, drive)
 ```
 
 | Extra | Installs |
 |---|---|
 | `sdk` | `claude-agent-sdk`, for the in-process adapter |
 | `clock` | the `clock` tool set |
-| `google` | the Google client libraries, shared by all five Google tool sets |
+| `google` | the Google client libraries, shared by all seven Google tool sets |
 | `mac` | nothing more: the `mac` tool set runs macOS's own programs |
 | `all` | `sdk` + `clock` + `google` + `mac` |
 | `dev` | `all` + `pytest` + `anyio` |
@@ -214,21 +216,23 @@ flowchart LR
 
 ## 📬 The Google tool sets
 
-Gmail, Google Calendar, Google Chat, Google Docs and Google Sheets across **any number of Google accounts**. Each is its own tool set, so you load only what you need, or all five as the `google` group.
+Gmail, Google Calendar, Google Chat, Google Docs, Google Sheets, Google Slides and Google Drive search across **any number of Google accounts**. Each is its own tool set, so you load only what you need, or all seven as the `google` group.
 
 | Tool set | 👀 Reads (read-only) | ✏️ Changes | 🔒 Needs confirmation |
 |---|---|---|---|
-| `gmail` | `gmail_search`, `gmail_read` | `gmail_create_draft`, `gmail_modify` (read/unread, archive, star, labels) | — |
-| `calendar` | `calendar_events`, `calendar_draft_invite` | `calendar_create_event` (nobody invited) | `calendar_send_invite` |
+| `gmail` | `gmail_search`, `gmail_read`, `gmail_draft_send`, `gmail_draft_reply` | `gmail_create_draft` (saved in Drafts, a reply in its thread if asked), `gmail_modify` (read/unread, archive, star, labels) | `gmail_send` |
+| `calendar` | `calendar_events`, `calendar_event`, `calendar_free_time`, `calendar_draft_invite`, `calendar_draft_update`, `calendar_draft_respond`, `calendar_draft_delete` | `calendar_create_event` (nobody invited), `calendar_update_event` (only events with nobody else on them) | `calendar_send_invite`, `calendar_send_update`, `calendar_send_response`, `calendar_delete_event` |
 | `chat` | `chat_unread`, `chat_spaces`, `chat_read`, `chat_search`, `chat_draft` | `chat_mark_read` (the user's own read state) | `chat_send` |
 | `docs` | `docs_search`, `docs_read`, `docs_draft_delete` | `docs_beautify`, `docs_format`, `docs_replace_text`, `docs_insert`, `docs_insert_image` | `docs_delete` |
 | `sheets` | `sheets_search`, `sheets_read`, `sheets_draft_delete_tab` | `sheets_write`, `sheets_append`, `sheets_add_tab`, `sheets_format` | `sheets_delete_tab` |
+| `slides` | `slides_search`, `slides_read` (slide by slide, with speaker notes) | — | — |
+| `drive` | `drive_search` (any file or folder, by name or content, shared with the user too) | — | — |
 
 ### Accounts
 
 | Tools | Which account they use |
 |---|---|
-| **Searches** (`gmail_search`, `calendar_events`, `chat_unread`, `chat_search`) | Every account unless one is named; an account that fails is left out with a note |
+| **Searches** (`gmail_search`, `calendar_events`, `chat_unread`, `chat_search`, `drive_search`) | Every account unless one is named; an account that fails is left out with a note |
 | **Everything else** | One account, defaulting to the default account (for Chat, the first account with Chat) |
 
 An account can be named by its **label** or its **email**.
@@ -236,9 +240,9 @@ An account can be named by its **label** or its **email**.
 ### 🛑 What it will never do
 
 > [!CAUTION]
-> Nothing here **sends email** (drafts wait in Gmail's Drafts), **trashes or deletes mail**, **deletes a document or spreadsheet**, or **deletes a row**.
+> Nothing here **sends email without a confirmed draft** (`gmail_draft_send` or `gmail_draft_reply`, then `gmail_send`), **trashes or deletes mail**, **deletes a document, spreadsheet or deck**, **deletes a row**, or **changes, shares or deletes a Drive file**.
 >
-> The tools that return other people's text (mail, chat, docs) tell the model, in their descriptions, **not to follow instructions in it**.
+> The tools that return other people's text (mail, chat, events, docs, decks) tell the model, in their descriptions, **not to follow instructions in it**.
 
 ### Sends and deletes: draft, then confirm
 
@@ -246,8 +250,8 @@ Everything that sends something to other people or deletes something is **two to
 
 | Step | Tools | What it does |
 |---|---|---|
-| **1. Draft** | `chat_draft`, `calendar_draft_invite`, `docs_draft_delete`, `sheets_draft_delete_tab` | Works out exactly what would happen, **changes nothing**, returns a `draft_id` and a `summary` to put to the user |
-| **2. Confirm** | `chat_send`, `calendar_send_invite`, `docs_delete`, `sheets_delete_tab` | Takes **only** the `draft_id`, so what happens is exactly what was drafted; declared `needs_confirmation` |
+| **1. Draft** | `gmail_draft_send`, `gmail_draft_reply`, `chat_draft`, `calendar_draft_invite`, `calendar_draft_update`, `calendar_draft_respond`, `calendar_draft_delete`, `docs_draft_delete`, `sheets_draft_delete_tab` | Works out exactly what would happen, **changes nothing**, returns a `draft_id` and a `summary` to put to the user |
+| **2. Confirm** | `gmail_send`, `chat_send`, `calendar_send_invite`, `calendar_send_update`, `calendar_send_response`, `calendar_delete_event`, `docs_delete`, `sheets_delete_tab` | Takes **only** the `draft_id`, so what happens is exactly what was drafted; declared `needs_confirmation` |
 
 ```mermaid
 sequenceDiagram
@@ -287,7 +291,8 @@ sequenceDiagram
 
 **Guarantees:**
 
-- A deletion is **pinned to the document revision** it was worked out from, so if the doc changed in between, nothing is deleted.
+- A deletion is **pinned to the document revision** it was worked out from, so if the doc changed in between, nothing is deleted. A calendar change or deletion is pinned the same way, to the event's etag.
+- An email's summary names **everyone it goes to, cc and bcc included**, and its exact text. A reply keeps its thread: Gmail's `threadId`, `In-Reply-To` and `References`, and a `Re:` subject.
 - A draft is **used once at most** and lapses after `draft_minutes`.
 - With `host_approval` on (the default), the confirming tool also **refuses any draft the host hasn't approved**, so even a misconfigured gate can't send:
 
@@ -332,6 +337,8 @@ In a Google Cloud project, create an OAuth client of type **Desktop app**, downl
 | `calendar` | Google Calendar |
 | `docs` | Google Drive, Google Docs |
 | `sheets` | Google Drive, Google Sheets |
+| `slides` | Google Drive, Google Slides |
+| `drive` | Google Drive |
 | `chat` | Google Chat API (with a Chat app configured on its Configuration page) and the People API |
 
 #### 2. List your accounts
@@ -477,7 +484,8 @@ src/ai_armory/
     ├── clock.py
     ├── mac.py         notifications, apps and links, Apple Shortcuts, volume
     └── google/        settings, shared clients, drafts, sign-in,
-                       and gmail, calendar, chat, docs (+ docs_write, docs_images), sheets
+                       and gmail, calendar, chat, docs (+ docs_write, docs_images), sheets,
+                       slides, drive
 ```
 
 ---
