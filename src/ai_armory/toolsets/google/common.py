@@ -33,15 +33,20 @@ T = TypeVar("T")
 
 CALENDAR = "https://www.googleapis.com/auth/calendar"
 GMAIL_READ = "https://www.googleapis.com/auth/gmail.readonly"
-GMAIL_COMPOSE = "https://www.googleapis.com/auth/gmail.compose"  # drafts; nothing here sends mail
+# Drafts, and sending mail: gmail_send sends only a draft the host approved (drafts.py).
+GMAIL_COMPOSE = "https://www.googleapis.com/auth/gmail.compose"
 GMAIL_MODIFY = "https://www.googleapis.com/auth/gmail.modify"
 SHEETS = "https://www.googleapis.com/auth/spreadsheets"
-DRIVE_METADATA = "https://www.googleapis.com/auth/drive.metadata.readonly"  # only to find sheets and docs by name
+DRIVE_METADATA = "https://www.googleapis.com/auth/drive.metadata.readonly"  # finding files by name and details
 DOCS_READ = "https://www.googleapis.com/auth/documents.readonly"
 DOCS = "https://www.googleapis.com/auth/documents"  # changing docs (docs_write.py); covers reading too
 # Only the files the tools make themselves: images from this machine, held in Drive while a doc fetches them.
 DRIVE_FILE = "https://www.googleapis.com/auth/drive.file"
-SCOPES = [CALENDAR, GMAIL_READ, GMAIL_COMPOSE, GMAIL_MODIFY, SHEETS, DRIVE_METADATA, DOCS_READ, DOCS, DRIVE_FILE]
+# Reading what's in Drive files, never changing them: searching inside files (drive_search) and Google Slides
+# (slides_read). It covers the metadata scope too.
+DRIVE_READ = "https://www.googleapis.com/auth/drive.readonly"
+SCOPES = [CALENDAR, GMAIL_READ, GMAIL_COMPOSE, GMAIL_MODIFY, SHEETS, DRIVE_METADATA, DOCS_READ, DOCS, DRIVE_FILE,
+          DRIVE_READ]
 # Google Chat, asked for only by accounts marked for Chat: read-only, plus create-only for sending and for starting
 # a DM, and the user's own read state for marking spaces read. Never chat.messages (full read and write),
 # chat.delete, chat.import or the admin-approved chat.app.* scopes.
@@ -56,17 +61,18 @@ DIRECTORY = "https://www.googleapis.com/auth/directory.readonly"  # Chat names p
 CHAT_SCOPES = [CHAT_SPACES, CHAT_READ, CHAT_MEMBERS, CHAT_READSTATE, CHAT_SEND, CHAT_CREATE, CHAT_MARK, DIRECTORY]
 # What a token without each scope can't do, for the sign-in-again message.
 ADDED_SCOPES = {
-    CALENDAR: "use Google Calendar", GMAIL_READ: "read mail", GMAIL_COMPOSE: "write email drafts",
+    CALENDAR: "use Google Calendar", GMAIL_READ: "read mail", GMAIL_COMPOSE: "write and send email",
     GMAIL_MODIFY: "change mail", SHEETS: "read and edit Google Sheets",
-    DRIVE_METADATA: "find Google Sheets and Docs by name", DOCS_READ: "read Google Docs", DOCS: "edit Google Docs",
+    DRIVE_METADATA: "find files in Google Drive by name", DOCS_READ: "read Google Docs", DOCS: "edit Google Docs",
     DRIVE_FILE: "put images from this machine into Google Docs",
+    DRIVE_READ: "search inside Google Drive files and read Google Slides",
     CHAT_SPACES: "see Google Chat", CHAT_READ: "read Google Chat messages",
     CHAT_MEMBERS: "see who's in a Google Chat space", CHAT_READSTATE: "tell what's unread in Google Chat",
     CHAT_SEND: "send Google Chat messages", CHAT_CREATE: "start new Google Chat conversations",
     CHAT_MARK: "mark Google Chat spaces as read", DIRECTORY: "name people in Google Chat",
 }
 # A token granted the broader scope needs no sign-in again for the narrower one.
-BROADER = {DOCS_READ: DOCS, GMAIL_READ: GMAIL_MODIFY}
+BROADER = {DOCS_READ: DOCS, GMAIL_READ: GMAIL_MODIFY, DRIVE_METADATA: DRIVE_READ}
 MAX_PARALLEL = 6  # accounts read at once by an "all" search
 
 
@@ -212,12 +218,17 @@ def account_email(label: str) -> str:
     return service(label, "gmail", "v1").users().getProfile(userId="me").execute().get("emailAddress", "")
 
 
+def drive_quoted(text: str) -> str:
+    """`text` as a quoted string in a Drive search."""
+    return "'" + text.strip().replace("\\", "\\\\").replace("'", "\\'") + "'"
+
+
 def drive_find(account: str, mime_type: str, name: str, max_results: int) -> list[dict]:
     """Files of one Google type whose name contains `name`, newest change first, from My Drive, shared with the
     user and shared drives. Drive metadata only: names and details, never contents."""
     query = [f"mimeType='{mime_type}'", "trashed=false"]
     if name.strip():
-        query.append("name contains '" + name.strip().replace("\\", "\\\\").replace("'", "\\'") + "'")
+        query.append(f"name contains {drive_quoted(name)}")
     drive = service(account, "drive", "v3", needs=DRIVE_METADATA)
     with api_errors(account, DRIVE_METADATA):
         files = drive.files().list(

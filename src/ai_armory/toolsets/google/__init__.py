@@ -1,5 +1,5 @@
-"""Google Workspace tool sets: gmail, calendar, chat, docs and sheets, each loadable on its own, or all of them
-as the ``google`` group.
+"""Google Workspace tool sets: gmail, calendar, chat, docs, sheets, slides and drive, each loadable on its own, or
+all of them as the ``google`` group.
 
     from ai_armory.toolsets.google import Account, GoogleSettings, configure
 
@@ -14,6 +14,6 @@ drafts.py). This module itself needs no Google libraries.
 from ai_armory.toolsets.google.drafts import Draft, approve, discard, pending
 from ai_armory.toolsets.google.settings import Account, GoogleSettings, configure, current
 
-SUBSETS = ("gmail", "calendar", "chat", "docs", "sheets")
+SUBSETS = ("gmail", "calendar", "chat", "docs", "sheets", "slides", "drive")
 
 __all__ = ["SUBSETS", "Account", "Draft", "GoogleSettings", "approve", "configure", "current", "discard", "pending"]
