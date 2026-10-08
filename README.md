@@ -100,7 +100,7 @@ flowchart LR
 | `clock` | Current date and time, in any IANA time zone | `clock` |
 | `gmail` · `calendar` · `chat` · `docs` · `sheets` · `slides` · `drive` | Google Workspace across many accounts ([details](#-the-google-tool-sets)) | `google` |
 | `google` *(group)* | All seven Google tool sets at once | `google` |
-| `mac` | Notifications, apps and links, Apple Shortcuts and the volume on this Mac ([details](#-the-mac-tool-set)) | `mac` |
+| `mac` | Notifications, apps and links, Apple Shortcuts, the volume and the clipboard on this Mac ([details](#-the-mac-tool-set)) | `mac` |
 
 ---
 
@@ -415,9 +415,11 @@ Control of the Mac the tools run on, through macOS's own programs, so there's **
 | `mac_run_shortcut` | | Runs an Apple Shortcut by exact name, with optional text input (`shortcuts run`), for up to 2 minutes |
 | `mac_list_shortcuts` | ✅ | Lists the Apple Shortcuts (`shortcuts list`) |
 | `mac_set_volume` | | Sets the output volume, kept between 0 and 100 (`osascript`, `set volume`) |
+| `mac_copy` | | Puts text on the clipboard, replacing what's there (`pbcopy`, the text on stdin as UTF-8) |
+| `mac_read_clipboard` | ✅ | The clipboard's text, up to 20,000 characters; an image or files read as no text (`pbpaste`) |
 
 > [!IMPORTANT]
-> **Arguments go to programs as argv, never through a shell**, and a notification's text reaches AppleScript as arguments, not as script. Nothing here needs confirmation; a host that wants a yes before opening apps or running shortcuts can gate them itself.
+> **Arguments go to programs as argv, never through a shell**, and a notification's text reaches AppleScript as arguments, not as script. Nothing here needs confirmation; a host that wants a yes before opening apps or running shortcuts can gate them itself. What `mac_read_clipboard` returns came from anywhere, so a host should treat it as data, like an email's text, never as instructions.
 
 ```sh
 ai-armory serve --toolsets mac
@@ -482,7 +484,7 @@ src/ai_armory/
 │   └── stdio.py       standalone stdio MCP server
 └── toolsets/          one module per tool set
     ├── clock.py
-    ├── mac.py         notifications, apps and links, Apple Shortcuts, volume
+    ├── mac.py         notifications, apps and links, Apple Shortcuts, volume, clipboard
     └── google/        settings, shared clients, drafts, sign-in,
                        and gmail, calendar, chat, docs (+ docs_write, docs_images), sheets,
                        slides, drive
