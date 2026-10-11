@@ -1,14 +1,9 @@
-"""Drafts: everything that sends or deletes is done in two steps, so the host can ask the user in between.
+"""Two-step sends and deletes, so the host can ask the user in between.
 
-A drafting tool (chat_draft, calendar_draft_invite, docs_draft_delete, sheets_draft_delete_tab) works out exactly
-what would happen, changes nothing, keeps it here and returns a draft_id with a summary. The confirming tool
-(chat_send, calendar_send_invite, docs_delete, sheets_delete_tab) takes only that draft_id, so what's done is
-exactly what was drafted, and is declared needs_confirmation for the host to gate.
-
-With ``host_approval`` on (the default), the confirming tool also refuses any draft the host hasn't approved: the
-host looks the draft up with ``pending(draft_id)``, puts its ``summary`` to the user, and on a clear yes calls
-``approve(draft_id)`` before letting the call through. A draft is used once at most, and lapses after
-``draft_minutes``. Drafts live in this process's memory only.
+A drafting tool (e.g. chat_draft) works out the action, changes nothing and returns a draft_id and summary. The
+confirming tool (e.g. chat_send, needs_confirmation) takes only the draft_id, so it does exactly what was drafted.
+With ``host_approval`` on, it also refuses drafts the host hasn't ``approve``d after putting
+``pending(draft_id).summary`` to the user. Drafts are single-use, in-memory, and lapse after ``draft_minutes``.
 """
 
 from __future__ import annotations
@@ -30,8 +25,8 @@ class Draft:
     id: str
     kind: str  # the confirming tool's name, e.g. chat_send
     account: str
-    summary: str  # what would happen, in full, to put to the user word for word
-    short: str  # the same in a few words, for a log
+    summary: str  # what would happen, in full, to put to the user verbatim
+    short: str  # a few words, for a log
     payload: dict[str, Any] = field(default_factory=dict)  # what the confirming tool needs; never shown
     made: float = 0.0
     approved: bool = False
@@ -63,8 +58,7 @@ def pending(draft_id: str) -> Draft | None:
 
 
 def approve(draft_id: str) -> bool:
-    """Lets the confirming tool act on this draft once. Only the host calls it, after the user's clear yes. False
-    if there's no such draft (it lapsed, or was used)."""
+    """Host only, after the user's clear yes: let the confirming tool act once. False if lapsed or used."""
     with _LOCK:
         if found := pending(draft_id):
             found.approved = True
@@ -77,8 +71,7 @@ def discard(draft_id: str) -> None:
 
 
 def take(draft_id: str, kind: str, remake: str) -> Draft:
-    """The draft, removed so it's used once at most even if acting on it fails. Raises if there's none of this
-    kind, or the host hasn't approved it while host approval is on."""
+    """Remove and return the draft (single use even if acting fails); raises if missing, wrong kind or unapproved."""
     with _LOCK:
         draft = pending(draft_id)
         if draft is None or draft.kind != kind:

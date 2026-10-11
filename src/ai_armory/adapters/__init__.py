@@ -1,5 +1,1 @@
-"""Adapters that expose tool sets to a particular MCP host.
-
-Each adapter is its own module and is imported only by whoever uses it, so
-``import ai_armory`` never requires the Claude Agent SDK.
-"""
+"""Adapters that expose tool sets to an MCP host. Imported only on use, so ``import ai_armory`` never needs the SDK."""

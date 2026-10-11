@@ -1,5 +1,4 @@
-"""Google Calendar, with the Calendar API mocked: listing, private events, invites in two steps, changing,
-deleting and answering events (in two steps whenever other people are emailed), and free time."""
+"""Google Calendar, with the Calendar API mocked."""
 
 import pytest
 from google_fakes import Services, http_error, write_token

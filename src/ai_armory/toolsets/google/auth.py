@@ -1,14 +1,9 @@
-"""Signing a Google account in, for ``python -m ai_armory.toolsets.google login LABEL`` (and ``check-chat``).
+"""Google sign-in for ``python -m ai_armory.toolsets.google login LABEL`` and ``check-chat``.
 
-The label must be one of the configured accounts. Opens a browser sign-in with the OAuth client JSON (the
-``client_secret`` setting, ``--client-secret`` or ``$GOOGLE_CLIENT_SECRET``) and stores the token in
-``<token_dir>/google-<label>.json``, readable only by its owner. Sign in again to replace the token, e.g. after the
-tools gain a permission; the old token stays exactly as it was until a sign-in succeeds. Nothing here prints a
-token.
-
-Accounts with Chat are also asked for Google Chat. A Workspace admin can block Chat for the app, and Google then
-refuses the whole request, so the sign-in offers to try again without reading messages, then without Chat at all.
-Once signed in, it checks that Chat works; `check_chat` runs only that check.
+Runs a browser OAuth flow with the client JSON (``client_secret`` setting, ``--client-secret`` or
+``$GOOGLE_CLIENT_SECRET``) and writes ``<token_dir>/google-<label>.json`` owner-only. The old token is kept until a
+sign-in succeeds; no token is ever printed. Chat accounts also ask for Chat scopes, and since an admin block on Chat
+makes Google refuse the whole request, the user is offered retries with less of Chat.
 """
 
 from __future__ import annotations
@@ -38,7 +33,7 @@ class Refused(Exception):
 
 
 def attempts(label: str) -> list[tuple[str, list[str]]]:
-    """What to ask for, in order: each one after the first asks for less of Chat, tried if the one before is refused."""
+    """Scope sets to try in order, each asking for less of Chat than the one refused before it."""
     if label not in settings().chat_labels:
         return [("", list(SCOPES))]
     return [("with Google Chat", SCOPES + CHAT_SCOPES),
@@ -71,8 +66,7 @@ def sign_in(scopes: list[str], secret: str):
 
 
 def save(label: str, creds) -> set[str]:
-    """Writes the token with the scopes Google granted, not the ones asked for: refreshing with a scope that was
-    never granted fails outright. Returns them."""
+    """Write the token with the scopes actually granted (refreshing with ungranted ones fails) and return them."""
     given = creds.granted_scopes or creds.scopes or []
     given = set(given.split() if isinstance(given, str) else given)
     write_private(token_path(label), json.dumps(json.loads(creds.to_json()) | {"scopes": sorted(given)}))
@@ -106,8 +100,7 @@ def connect(label: str, secret: str, ask: Callable[[str], str] = input,
 
 
 def _after_chat_sign_in(label: str, step: int, given: set[str]) -> None:
-    """Records a Chat refusal for the Chat tools (so they fall back rather than ask for a sign-in that can't
-    work), says what Chat can do, and checks it."""
+    """Record any Chat refusal (so the Chat tools fall back instead of asking for a futile sign-in), then check Chat."""
     if step == 2 and CHAT_SPACES not in given:
         chat.save_state(label, "blocked", "The Workspace refused Google Chat at sign-in.")
         print("chat_unread will read Chat's notification emails instead. Turn those on in Google Chat's settings.")
@@ -124,7 +117,7 @@ def _after_chat_sign_in(label: str, step: int, given: set[str]) -> None:
 
 
 def check_chat(label: str) -> int:
-    """Checks Google Chat works on the account, and says what to fix if not. 0 if it does."""
+    """Check Google Chat works on the account and print what to fix if not; exit code 0 if it works."""
     if label not in settings().chat_labels:
         sys.exit(f"Google Chat isn't set up for the {label} account. Set chat = true for it in the Google config.")
     try:

@@ -1,13 +1,8 @@
-"""Finding and loading tool sets by name.
+"""Find and load tool sets by name.
 
-Each tool set lives in its own module exposing a module-level ``toolset``.
-Modules are imported only when asked for, so a tool set whose optional
-dependencies are missing never breaks the others.
-
-Third-party packages can add tool sets through the ``ai_armory.toolsets``
-entry point group, pointing at a ``ToolSet`` object.
-
-A group such as ``google`` names several built-in tool sets at once.
+Each module exposes a ``toolset`` and is imported only on demand, so missing optional dependencies break only that
+tool set. Plugins register a ``ToolSet`` under the ``ai_armory.toolsets`` entry point group. A group such as
+``google`` names several built-in tool sets.
 """
 
 from __future__ import annotations
@@ -29,8 +24,7 @@ BUILTIN: dict[str, str] = {
     "mac": "ai_armory.toolsets.mac",
 }
 
-# Names that stand for several tool sets at once. They aren't tool sets themselves, so serving "all" never loads
-# a group's members twice.
+# Not tool sets themselves, so serving "all" never loads a group's members twice.
 GROUPS: dict[str, tuple[str, ...]] = {
     "google": ("gmail", "calendar", "chat", "docs", "sheets", "slides", "drive"),
 }
@@ -46,7 +40,7 @@ def available() -> list[str]:
 
 
 def expand(names: list[str]) -> list[str]:
-    """The tool set names, with each group replaced by its members, each name once, in order."""
+    """Replace groups by their members, deduplicated, order kept."""
     return list(dict.fromkeys(member for n in names for member in GROUPS.get(n, (n,))))
 
 

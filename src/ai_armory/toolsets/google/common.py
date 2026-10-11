@@ -1,9 +1,7 @@
-"""What the Google tool sets share: OAuth scopes, building API clients from each account's token, turning the API
-errors only a fix outside the tools can clear into what to do, reading several accounts at once, and declaring
-tools whose schemas list the configured accounts.
+"""Shared by the Google tool sets: scopes, per-account API clients, actionable API errors, multi-account reads, and
+tool declarations whose schemas list the configured accounts.
 
-The Google client libraries are imported here, so a tool set whose extra isn't installed fails to load with an
-ImportError and the others are unaffected.
+Importing the Google client here makes a tool set without its extra fail with ImportError, leaving the others intact.
 """
 
 from __future__ import annotations
@@ -40,16 +38,14 @@ SHEETS = "https://www.googleapis.com/auth/spreadsheets"
 DRIVE_METADATA = "https://www.googleapis.com/auth/drive.metadata.readonly"  # finding files by name and details
 DOCS_READ = "https://www.googleapis.com/auth/documents.readonly"
 DOCS = "https://www.googleapis.com/auth/documents"  # changing docs (docs_write.py); covers reading too
-# Only the files the tools make themselves: images from this machine, held in Drive while a doc fetches them.
+# Only files the tools create: local images held in Drive while a doc fetches them.
 DRIVE_FILE = "https://www.googleapis.com/auth/drive.file"
-# Reading what's in Drive files, never changing them: searching inside files (drive_search) and Google Slides
-# (slides_read). It covers the metadata scope too.
+# Read-only file contents, for drive_search inside files and slides_read; covers the metadata scope too.
 DRIVE_READ = "https://www.googleapis.com/auth/drive.readonly"
 SCOPES = [CALENDAR, GMAIL_READ, GMAIL_COMPOSE, GMAIL_MODIFY, SHEETS, DRIVE_METADATA, DOCS_READ, DOCS, DRIVE_FILE,
           DRIVE_READ]
-# Google Chat, asked for only by accounts marked for Chat: read-only, plus create-only for sending and for starting
-# a DM, and the user's own read state for marking spaces read. Never chat.messages (full read and write),
-# chat.delete, chat.import or the admin-approved chat.app.* scopes.
+# Requested only by Chat accounts: read-only, create-only for sending and starting a DM, and the user's own read
+# state. Never chat.messages (full read/write), chat.delete, chat.import or the admin-approved chat.app.* scopes.
 CHAT_SPACES = "https://www.googleapis.com/auth/chat.spaces.readonly"
 CHAT_READ = "https://www.googleapis.com/auth/chat.messages.readonly"  # the one a Workspace admin is likeliest to block
 CHAT_MEMBERS = "https://www.googleapis.com/auth/chat.memberships.readonly"
@@ -115,10 +111,6 @@ def not_connected(label: str) -> str:
     return f"The {label} Google account is not signed in yet. Sign it in with: {settings().sign_in(label)}"
 
 
-def has_scope(scopes: set[str], needs: str) -> bool:
-    return needs in scopes or (needs in BROADER and BROADER[needs] in scopes)
-
-
 # Built per call: googleapiclient clients are not thread-safe and the tools run in threads.
 def service(label: str, api: str, version: str, needs: str | None = None):
     from google.auth.transport.requests import Request
@@ -145,8 +137,7 @@ def sign_in_again(label: str, scope: str = GMAIL_MODIFY) -> str:
 
 @contextmanager
 def api_errors(label: str, scope: str):
-    """Turns the two API errors only a fix outside the tools clears, a missing scope or an API left off, into what
-    to do."""
+    """Turn a missing scope or a disabled API, which only the user can fix, into instructions."""
     from googleapiclient.errors import HttpError
 
     try:
@@ -162,7 +153,7 @@ def api_errors(label: str, scope: str):
 
 
 def only(requests: list[dict], allowed: set[str], product: str) -> None:
-    """Refuses a batchUpdate with any request kind outside `allowed`, the few that tool is meant to send."""
+    """Refuse a batchUpdate containing any request kind outside `allowed`."""
     if extra := {kind for request in requests for kind in request} - allowed:
         raise ValueError(f"These tools don't send {', '.join(sorted(extra))} to {product}.")
 
@@ -180,9 +171,8 @@ def connected(labels: list[str] | None = None) -> list[str]:
 
 
 def each(labels: list[str], read: Callable[[str], T]) -> tuple[list[T], list[str]]:
-    """`read(label)` for each label, at most MAX_PARALLEL at once, and the notes. With several, one that fails (not
-    signed in, its access withdrawn, Google down for it) is left out and said in the notes, so the others still
-    answer; if they all fail, that's raised. One label's failure is raised as it is."""
+    """`read(label)` for each label (MAX_PARALLEL at once), plus notes. With several labels, failures are left out and
+    noted so the rest still answer, and raised only if all fail; a single label's failure is raised as is."""
     if len(labels) < 2:
         return [read(label) for label in labels], []
 
@@ -203,13 +193,13 @@ def each(labels: list[str], read: Callable[[str], T]) -> tuple[list[T], list[str
 
 
 def across(account: str, read: Callable[[str], list[dict]]) -> tuple[list[dict], list[str]]:
-    """`read(label)` for each account `account` names, as one list, and the notes on any left out (see `each`)."""
+    """`each` over the accounts `account` names, flattened into one list."""
     found, notes = each(accounts_for(account), read)
     return [item for items in found for item in items], notes
 
 
 def noted(key: str, items: list[dict], notes: list[str]) -> list[dict] | dict:
-    """The items as they are, or with notes on accounts left out, {key: items, "notes": notes}."""
+    """The items, or {key: items, "notes": notes} when there are notes."""
     return {key: items, "notes": notes} if notes else items
 
 
@@ -224,8 +214,7 @@ def drive_quoted(text: str) -> str:
 
 
 def drive_find(account: str, mime_type: str, name: str, max_results: int) -> list[dict]:
-    """Files of one Google type whose name contains `name`, newest change first, from My Drive, shared with the
-    user and shared drives. Drive metadata only: names and details, never contents."""
+    """Files of one Google type whose name contains `name`, newest first, across all drives; metadata only."""
     query = [f"mimeType='{mime_type}'", "trashed=false"]
     if name.strip():
         query.append(f"name contains {drive_quoted(name)}")
@@ -245,8 +234,8 @@ def drive_find(account: str, mime_type: str, name: str, max_results: int) -> lis
 
 # ── Declaring tools ─────────────────────────────────────────────
 
-# Placeholders for an account field in a tool's properties, filled in from the settings when the tool set is
-# built, so the schema lists the configured accounts. Other keys given with one (a description) are kept.
+# Account-field placeholders, replaced at build time by a schema listing the configured accounts. Other keys given
+# alongside (a description) are kept.
 ACCOUNT = {"$account": "one"}  # one account, defaulting to the default account
 ACCOUNT_OR_ALL = {"$account": "all"}  # one account or "all", defaulting to "all"
 CHAT_ACCOUNT = {"$account": "chat"}  # one account, defaulting to the first with Chat
@@ -287,7 +276,7 @@ class Spec:
 
 @dataclass
 class Specs:
-    """The tools of one Google tool set, declared at import and built into a ToolSet once the accounts are known."""
+    """One tool set's tools, declared at import and built into a ToolSet once the accounts are known."""
 
     items: list[Spec] = field(default_factory=list)
 
@@ -342,7 +331,7 @@ def _handler(spec: Spec, properties: dict[str, dict], s: GoogleSettings):
 
 
 def build(name: str, description: str, specs: Specs | list[Specs]) -> ToolSet:
-    """The tool set, with each account field's schema listing the accounts as they're configured now."""
+    """Build the ToolSet, with account fields listing the currently configured accounts."""
     s = settings()
     toolset = ToolSet(name, description)
     for spec in [i for group in (specs if isinstance(specs, list) else [specs]) for i in group.items]:

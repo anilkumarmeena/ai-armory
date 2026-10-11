@@ -1,8 +1,4 @@
-"""Framework-neutral tool definitions.
-
-A tool set declares its tools once, here, with no reference to any MCP
-library. The adapters in ``ai_armory.adapters`` turn them into servers.
-"""
+"""Framework-neutral tool definitions; ``ai_armory.adapters`` turns them into MCP servers."""
 
 from __future__ import annotations
 
@@ -24,8 +20,7 @@ class Tool:
     description: str
     input_schema: dict[str, Any]
     handler: Handler
-    # Metadata for the host. AI Armory never prompts; a host like JARVIS reads
-    # needs_confirmation and asks the user before letting the call through.
+    # Host metadata: AI Armory never prompts; the host asks the user before running a needs_confirmation tool.
     needs_confirmation: bool = False
     read_only: bool = False
 
@@ -38,11 +33,7 @@ class Result:
 
 @dataclass
 class ToolSet:
-    """A named group of tools, loaded and exposed as a unit.
-
-    Tool names are prefixed with the tool set name when exposed, so ``now``
-    in the ``clock`` tool set is served as ``clock_now``.
-    """
+    """A named group of tools; each tool is exposed as ``<set>_<name>``, e.g. ``clock_now``."""
 
     name: str
     description: str
@@ -91,11 +82,7 @@ def all_tools(toolsets: list[ToolSet]) -> list[Tool]:
 
 
 async def call(tool: Tool, arguments: dict[str, Any]) -> Result:
-    """Run a handler and normalise its return value or failure into a Result.
-
-    Handlers may return a string (used as-is) or any JSON-serialisable value
-    (rendered as JSON). A raised exception becomes an error result.
-    """
+    """Run a handler: a str is returned as-is, other values as JSON, and any exception as an error Result."""
     try:
         value = await tool.handler(arguments)
     except Exception as e:  # reported to the model, never raised to the host

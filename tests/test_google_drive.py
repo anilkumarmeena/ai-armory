@@ -1,5 +1,4 @@
-"""Google Drive search and Google Slides, with the Drive and Slides APIs mocked: any file by name or content, and a
-deck read slide by slide with its speaker notes."""
+"""Google Drive search and Google Slides, with the Drive and Slides APIs mocked."""
 
 import pytest
 from google_fakes import Services, http_error, write_token

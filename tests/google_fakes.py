@@ -1,5 +1,4 @@
-"""Stand-ins for Google's API clients and helpers shared by the Google tool set tests. Nothing here touches the
-network."""
+"""Offline stand-ins for Google's API clients, shared by the Google tool set tests."""
 
 import json
 import struct

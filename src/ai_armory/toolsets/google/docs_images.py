@@ -1,15 +1,11 @@
-"""Images in Google Docs: docs_insert_image puts PNG, JPG or GIF images, from files on this machine or https links,
-into a doc, each in a paragraph of its own with an optional caption under it.
+"""docs_insert_image: PNG, JPG or GIF images from local files or https links, each in its own paragraph with an
+optional caption.
 
-Docs' insertInlineImage only takes a link Google can fetch without signing in, and the doc keeps its own copy of the
-image it fetched. So an image from this machine goes to the account's Google Drive first, into the image folder
-(``image_folder`` in the settings; the drive.file scope: the tools see only the files they made), is shared with
-anyone who has the link just while the doc fetches it through the file's download link, and has that sharing taken
-off straight after, whether the edit went through or not. The Drive copy stays there, shared with no one. An https
-link goes to Docs as it is; the tool fetches it first too, to check it's an image and to size it, and if Docs can't
-fetch it, holds that copy in Drive the same way instead. Files that look like secrets (keys, tokens, anything in a
-secrets folder, the sign-in tokens' folder) are never uploaded. Positions and the revision pin work as in
-docs_write.py.
+insertInlineImage only takes a link Google can fetch anonymously, and the doc keeps its own copy. So a local image is
+uploaded to the account's Drive ``image_folder`` (drive.file scope), link-shared only while Docs fetches it, then
+unshared whether or not the edit succeeded; the Drive copy stays, shared with no one. An https link is passed as is,
+but fetched first to check and size it, and goes via Drive the same way if Docs can't fetch it. Secret-looking files
+are never uploaded. Positions and the revision pin work as in docs_write.py.
 """
 
 from __future__ import annotations

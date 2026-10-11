@@ -1,5 +1,5 @@
-"""Google Docs, with the Docs and Drive APIs mocked. Docs are laid out with real positions (`layout`), and `apply`
-plays the position-moving requests back on the text, so the tests check that each edit lands where it should."""
+"""Google Docs, with the Docs and Drive APIs mocked. `layout` gives docs real positions and `apply` replays the
+position-moving requests, so tests check where each edit lands."""
 
 from unittest.mock import MagicMock
 

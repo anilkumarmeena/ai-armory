@@ -1,11 +1,7 @@
-"""Which Google accounts the Google tool sets use, and where their sign-ins are kept.
+"""Which Google accounts the tool sets use, and where their tokens (``<token_dir>/google-<label>.json``) live.
 
-Each account has a label (what the tools take as ``account``), optionally its email, a description of what it's
-for, and whether it has Google Chat; one is the default, which gets whatever is made without naming an account.
-Each account's OAuth token is ``<token_dir>/google-<label>.json``.
-
-A host running the tools in-process calls ``configure(GoogleSettings(...))`` before loading the tool sets. Otherwise
-they're read once from a TOML file: ``$AI_ARMORY_GOOGLE_CONFIG``, else ``~/.config/ai-armory/google.toml``::
+In-process hosts call ``configure(GoogleSettings(...))`` before loading the tool sets; otherwise settings are read
+once from ``$AI_ARMORY_GOOGLE_CONFIG``, else ``~/.config/ai-armory/google.toml``::
 
     token_dir = "~/.config/ai-armory/google"   # default: beside this file
     default = "work"
@@ -40,28 +36,27 @@ NO_ACCOUNTS = ("No Google account is set up for these tools. List the accounts i
 
 @dataclass(frozen=True)
 class Account:
-    label: str
+    label: str  # what the tools take as `account`
     email: str = ""
-    description: str = ""  # what it's for, e.g. "for work", which the tools' schemas pass on to the model
+    description: str = ""  # e.g. "for work"; shown to the model in the tools' schemas
     chat: bool = False  # a Workspace account whose sign-in also asks for Google Chat
 
 
 @dataclass(frozen=True)
 class GoogleSettings:
     accounts: tuple[Account, ...] = ()
-    default: str = ""  # the label of the account that gets whatever is made without naming one; "" is the first
+    default: str = ""  # label used when a tool names no account; "" is the first
     token_dir: Path = Path("~/.config/ai-armory/google")
     timezone: str = "UTC"  # for calendar events and the times the tools show
     user_name: str = "the user"  # how tool results name the person they work for
-    # What to tell the user when an account needs signing in (again); {label} is filled in.
-    sign_in_command: str = "python -m ai_armory.toolsets.google login {label}"
+    sign_in_command: str = "python -m ai_armory.toolsets.google login {label}"  # shown when a sign-in is needed
     client_secret: str = ""  # the OAuth client JSON's path, used only by the sign-in command
-    draft_minutes: int = 10  # how long a draft (a Chat message, an invite, a deletion) waits to be confirmed
-    # True: a send or delete goes through only for a draft the host approved with approve(draft_id) after asking
-    # the user. False: the MCP client's own permission prompt for the confirming tool is trusted instead.
+    draft_minutes: int = 10  # how long a draft waits to be confirmed
+    # True: a confirming tool acts only on drafts the host approve()d after asking the user. False: trust the MCP
+    # client's own permission prompt instead.
     host_approval: bool = True
-    image_folder: str = "AI Armory doc images"  # the Drive folder holding images from this machine for Google Docs
-    blocked_paths: tuple[str, ...] = ()  # more folders or files docs_insert_image must never upload from
+    image_folder: str = "AI Armory doc images"  # Drive folder for local images put into Docs
+    blocked_paths: tuple[str, ...] = ()  # extra folders or files docs_insert_image must never upload
     extra: dict[str, Any] = field(default_factory=dict, compare=False)  # unknown keys from the file, ignored
 
     def __post_init__(self) -> None:
@@ -162,8 +157,7 @@ _current: GoogleSettings | None = None
 
 
 def configure(settings: GoogleSettings | None) -> None:
-    """Sets the accounts for every Google tool set, before they're loaded: their schemas list the accounts as they
-    are when loaded. None goes back to reading the config file."""
+    """Set the settings before loading the tool sets (schemas list accounts at load time); None re-reads the file."""
     global _current
     _current = settings
 
@@ -173,8 +167,7 @@ def config_path() -> Path:
 
 
 def current() -> GoogleSettings:
-    """The configured settings; else the config file's, read once; else none at all, so the tools still load and
-    say how to set them up."""
+    """The configured settings, else the config file's (read once), else empty so the tools load and explain setup."""
     global _current
     if _current is None:
         path = config_path()

@@ -1,8 +1,7 @@
-"""Google Sheets in the configured accounts: find by name, read, write, append, add tabs, format, and delete a tab.
+"""Google Sheets: find by name, read, write, append, add tabs, format, and delete a tab.
 
-Uses the spreadsheets scope, and read-only Drive metadata only for finding sheets by name. The one delete is a
-tab, one at a time and never the last, in two steps: sheets_draft_delete_tab, then sheets_delete_tab once the user
-says yes (see drafts.py). Nothing here deletes a spreadsheet or a row.
+The only delete is one tab (never the last), two-step via sheets_draft_delete_tab then sheets_delete_tab
+(drafts.py). Nothing here deletes a spreadsheet or a row.
 """
 
 from __future__ import annotations

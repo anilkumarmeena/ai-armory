@@ -1,7 +1,6 @@
-"""Google Slides in the configured accounts: find decks by name and read them as plain text, slide by slide, with
-each slide's speaker notes. Reading only: nothing here changes a deck.
+"""Google Slides: find decks by name and read them as plain text with speaker notes. Read-only.
 
-Reading uses the Slides API on drive.readonly, and finding by name the read-only Drive metadata.
+Reading uses the Slides API on drive.readonly; finding uses read-only Drive metadata.
 """
 
 from __future__ import annotations

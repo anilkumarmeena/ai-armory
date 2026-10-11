@@ -1,15 +1,10 @@
-"""Google Chat in the accounts that have it (``chat = true`` in the settings): what's unread, finding a space, a DM
-or a person by name, reading and searching it, marking it read, and messages that go out in two steps,
-chat_draft then chat_send once the user says yes (see drafts.py), to a new DM as well.
+"""Google Chat for accounts with ``chat = true``: unread, find spaces, DMs and people by name, read, search, mark
+read, and two-step sends (chat_draft, then chat_send after the user's yes; drafts.py), including to a new DM.
 
-Uses the account's Google sign-in with Chat's read-only scopes, create-only for sending and for starting a DM,
-the user's own read state for marking read, and the read-only directory, since Chat names people only by id.
-Even with the user's own sign-in, the Cloud project needs the Chat API on and a Chat app configured, and a
-Workspace admin can turn Chat off for the app: `problem` sorts those failures into what to do. While Chat is
-blocked, chat_unread reads Chat's notification emails.
-
-People are named from the directory, or failing that from the names on their messages, and kept for
-NAME_SECONDS in memory only. `news` is for a host's own alerts: unread DMs and mentions, with who wrote.
+Even with user sign-in, the Cloud project needs the Chat API and a Chat app configured, and an admin can block Chat
+for the app; `problem` turns those failures into fixes, and while blocked chat_unread reads Chat's notification
+emails. Chat names people only by id, so names come from the directory or their messages, cached in memory for
+NAME_SECONDS. `news` feeds a host's own alerts.
 """
 
 from __future__ import annotations
@@ -211,8 +206,8 @@ def check(label: str) -> tuple[str, str]:
 
 
 def _labels(account: str) -> list[str]:
-    """The accounts `account` names that have Chat. 'all' skips the others without a word, and covers every one
-    with Chat, signed in or not, as long as one is: `each` notes the rest."""
+    """The Chat accounts `account` names. 'all' silently skips non-Chat accounts and covers every Chat account,
+    signed in or not, as long as one is; `each` notes the rest."""
     if account != "all":
         _check_account(account)
         return [account]
@@ -332,8 +327,7 @@ def _me(label: str) -> str:
 
 
 def _names(label: str, users: set[str]) -> dict[str, str]:
-    """users/123 → the person's name: remembered, or from the People API's directory profiles; 'someone' if
-    neither can say."""
+    """users/123 → name, from memory or the People directory; 'someone' if neither knows."""
     missing = sorted(u for u in users if USER_ID.fullmatch(u) and not _known(label, u))
     if missing and DIRECTORY in granted(label):
         try:
@@ -413,9 +407,8 @@ def _writers(label: str, space: str, me: str) -> list[str]:
 
 
 def _titles(label: str, spaces: list[dict], me: str) -> dict[str, str]:
-    """Each space's spoken name: its own, or for a DM the other person's, or an unnamed group chat's people. Who's
-    in a DM or group chat comes from its members or, when the directory can't name them, from who has written in
-    it, since Chat's messages say who wrote them."""
+    """Each space's spoken name: its own, a DM's other person, or an unnamed group chat's people. People come from
+    the members or, when the directory can't name them, from who wrote there (messages carry writers' names)."""
     unnamed = [s for s in spaces if not s.get("displayName")]
     members = _members(label, unnamed, me) if unnamed else {}
     names = _names(label, {u for users in members.values() for u in users})
@@ -585,8 +578,7 @@ def _dms_with(label: str, chat, spaces: list[dict], query: str, titles: bool) ->
 
 
 def _matches(label: str, chat, spaces: list[dict], query: str, kind: str = "") -> list[Match]:
-    """Spaces and named group chats called something like `query`, and people so called, with their DM or with
-    none yet, best first."""
+    """Spaces, group chats and people (with their DM, if any) named like `query`, best first."""
     found = [Match(_score(query, s["displayName"]), s["displayName"], s) for s in spaces
              if s.get("displayName") and (not kind or KINDS.get(s.get("spaceType")) == kind)]
     if kind in ("", "dm"):
@@ -893,10 +885,9 @@ def chat_read(space: str, account: str = "", hours: int = 24, max_messages: int 
 
 
 def _scan(label: str, chat, words: list[str], since: datetime, target: dict | None) -> tuple[list[dict], int]:
-    """The tool's own search: the messages since `since` in one space, or in the most active ones, that hold every
-    word, ignoring case; and how many of those spaces it couldn't read back to `since`. Each space is read newest
-    first, as many messages a call as Chat allows, until its window is done, it has given PAGE matches (any older
-    ones would be cut), or SCAN_PAGES calls."""
+    """Fallback search: messages since `since` containing every word (case-insensitive) in one space or the most
+    active ones, plus how many spaces couldn't be read back that far. Each space is paged newest first until the
+    window ends, PAGE matches are found (older ones would be cut anyway), or SCAN_PAGES calls."""
     spaces = [target] if target else [s for s in _spaces(chat) if _time(s.get("lastActiveTime")) >= since][:MAX_SPACES]
     wanted = [w.casefold() for w in words]
 
@@ -1157,8 +1148,7 @@ def chat_draft(space: str, text: str, account: str = "", thread: str = "") -> di
 
 
 def _start_dm(account: str, member: str, name: str) -> str:
-    """The DM with a new draft's person: found, if one has been started since the draft, or else set up now. Only
-    chat_send calls it, for a draft the user has said yes to."""
+    """The DM with a draft's person, found if started since the draft, else set up now; chat_send only."""
     chat = _chat(account, CHAT_CREATE)
     with _errors(account, CHAT_CREATE):
         try:

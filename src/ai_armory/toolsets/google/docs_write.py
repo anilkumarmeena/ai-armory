@@ -1,12 +1,9 @@
-"""Google Docs, changed: format, beautify, replace text, insert paragraphs, and delete parts of a doc.
+"""Google Docs edits: format, beautify, replace text, insert paragraphs, and delete parts of a doc.
 
-Uses the documents scope; finding and reading docs are in docs.py, and putting images in is in docs_images.py.
-Every change is one documents.batchUpdate, which only ever gets the requests in BATCH_REQUESTS. Changes worked out
-from where things are in the doc are pinned to the revision they were worked out from, so an edit made meanwhile
-makes them fail rather than land in the wrong place. Nothing here deletes a doc or a tab: the only content removed
-is what docs_replace_text is told to replace, what docs_delete deletes (in two steps: docs_draft_delete, then
-docs_delete once the user says yes, see drafts.py), and the typed list marks, blank lines between list items and
-old heading numbers docs_beautify puts real lists and numbers in place of.
+Each change is one documents.batchUpdate limited to BATCH_REQUESTS. Position-based changes are pinned to the revision
+they were computed from, so a concurrent edit makes them fail instead of landing in the wrong place. Never deletes a
+doc or tab; content is removed only by docs_replace_text, the two-step docs_delete (drafts.py), and docs_beautify
+(typed list marks, blank lines between items, and heading numbers it replaces with real ones).
 """
 
 from __future__ import annotations
@@ -25,7 +22,7 @@ specs = Specs()
 BATCH_REQUESTS = {"insertText", "deleteContentRange", "replaceAllText", "updateParagraphStyle", "updateTextStyle",
                   "createParagraphBullets", "deleteParagraphBullets", "updateTableCellStyle", "pinTableHeaderRows",
                   "insertInlineImage"}
-# Requests that move the text after them, so they go last, from the end of the doc back (see _Plan).
+# Requests that move the text after them, so they go last, from the end of the doc back (see Plan).
 SHIFTING = {"insertText", "deleteContentRange", "createParagraphBullets",  # bullets drop leading tabs
             "insertInlineImage"}
 STYLES = {"title": "TITLE", "subtitle": "SUBTITLE", "heading_1": "HEADING_1", "heading_2": "HEADING_2",
@@ -106,8 +103,8 @@ def _nth(items: list, number, noun: str, uncounted: str = ""):
 
 @dataclass
 class Para:
-    """One paragraph: where it is and its text, with each non-text element (a chip, an image) as one ￼ per
-    position it takes, so a character's place in `text` maps to its position in the doc."""
+    """A paragraph's range and text, with one ￼ per position a non-text element (chip, image) takes, so an index
+    into `text` maps to a doc position."""
 
     start: int
     end: int
@@ -249,9 +246,8 @@ class Doc:
 
 
 class Plan:
-    """Requests worked out from positions in the doc as fetched. Styles move nothing, so they go first, as given;
-    then the edits that move text, each a group placed at one position, from the end of the doc back, so each
-    one's positions are still right when it runs."""
+    """Requests computed from fetched positions: styles first (they move nothing), then text-moving edit groups
+    from the end of the doc back, so each group's positions are still valid when it runs."""
 
     def __init__(self):
         self.styles: list[dict] = []
@@ -297,8 +293,7 @@ def _callout(doc: Doc, p: Para) -> list[dict]:
 
 def _table_style(doc: Doc, start: int, table: dict, bold: bool | None = True, fill: str | None = HEADER_FILL,
                  tidy: bool = True) -> list[dict]:
-    """Light borders and even padding on every cell, then the header row's fill and bold, and the header row
-    repeated on each page."""
+    """Light borders and padding on every cell, then a filled, bold header row repeated on each page."""
     rows = table.get("tableRows", [])
     at = doc.location(start)
     requests = []
@@ -861,8 +856,8 @@ SHOWN_MAX = 8  # paragraphs a draft quotes from one run before it skips the midd
 
 @dataclass
 class _Element:
-    """One element of the body or of a table cell: a paragraph, a table, or anything else (a section break, a table
-    of contents), with which segment it's in (0 is the body, then each cell) and its place there."""
+    """A body or table-cell element (paragraph, table, or other), with its segment (0 is the body, then each cell)
+    and index there."""
 
     block: dict
     para: Para | None

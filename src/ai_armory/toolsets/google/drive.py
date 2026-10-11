@@ -1,9 +1,6 @@
-"""Google Drive across the configured accounts: find any file or folder by its name or by what's in it, in My Drive,
-shared with the user and shared drives, with its type, owner, last change and link. Reading only: nothing here
-opens, changes or shares a file.
+"""Google Drive search across the configured accounts and all drives, by name or content. Read-only.
 
-Searching by name needs only Drive metadata (drive.metadata.readonly); searching inside files may need
-drive.readonly, and an account whose sign-in doesn't allow it is told to sign in again.
+Name search needs only drive.metadata.readonly; content search may need drive.readonly (else: sign in again).
 """
 
 from __future__ import annotations

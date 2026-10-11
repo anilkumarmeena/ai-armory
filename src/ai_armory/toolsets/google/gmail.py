@@ -1,8 +1,7 @@
-"""Gmail across the configured accounts: search, read, write drafts, label, archive or mark mail, and send.
+"""Gmail across the configured accounts: search, read, draft, label, archive, mark and send.
 
-Sending, a new email or a reply in its thread, is done in two steps: gmail_draft_send or gmail_draft_reply, then
-gmail_send once the user says yes (see drafts.py). gmail_create_draft instead saves a draft in Gmail's Drafts for the
-user to send themselves. Nothing here trashes or deletes mail.
+Sending is two-step (drafts.py): gmail_draft_send or gmail_draft_reply, then gmail_send after the user's yes.
+gmail_create_draft only saves to Gmail's Drafts for the user. Nothing here trashes or deletes mail.
 """
 
 from __future__ import annotations
@@ -70,10 +69,9 @@ def gmail_search(query: str, account: str = "all", max_results: int = 10) -> lis
 
 
 def _part_text(part: dict, mime: str, attachment) -> str:
-    """The text of every `mime` part under `part`, each decoded with its own charset.
+    """The text of every `mime` part under `part`, decoded per charset, skipping attached files.
 
-    Gmail leaves a large body out of the message and gives an attachmentId instead; attachment(id) fetches it.
-    Attached files (parts with a filename) aren't the message's text, so they're skipped.
+    Gmail replaces a large body with an attachmentId, which `attachment(id)` fetches.
     """
     if part.get("mimeType") == mime and not part.get("filename"):
         body = part.get("body", {})
@@ -250,8 +248,8 @@ def _replying(account: str, message_id: str, reply_all: bool) -> dict:
 
 def _compose(account: str, to: str, cc: str, bcc: str, subject: str, body: str, reply_to: str = "",
              reply_all: bool = False) -> tuple[EmailMessage, dict]:
-    """The email, and what to say about it. A reply goes in the thread of `reply_to`, a message id, to its sender
-    (and with `reply_all`, everyone else on it), plus anyone in to, cc and bcc."""
+    """The email and its description. A reply (`reply_to` is a message id) is threaded and goes to the sender, or
+    with `reply_all` everyone on it, plus to/cc/bcc."""
     if not body.strip():
         raise ValueError("The email is empty.")
     thread: dict = {}

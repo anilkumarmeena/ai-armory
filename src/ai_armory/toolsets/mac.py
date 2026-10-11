@@ -1,14 +1,7 @@
-"""Control of the Mac the tools run on: notifications, opening apps and links, Apple Shortcuts, the volume and the
-clipboard.
+"""Control the local Mac: notifications, apps and links, Apple Shortcuts, volume and clipboard. macOS only.
 
-Each tool runs one of macOS's own programs (osascript, open, shortcuts, pbcopy, pbpaste) with its arguments passed as
-argv, never through a shell, so the tool set needs nothing installed, but works only on macOS.
-
-A host can show a notification of its own, outside any tool call, with the function behind mac_notify:
-
-    from ai_armory.toolsets.mac import notify
-
-    await notify("Build", "Finished.")
+Each tool runs a built-in program (osascript, open, shortcuts, pbcopy, pbpaste) with argv, never a shell. Hosts can
+call ``await notify(title, message)`` directly for notifications of their own.
 """
 
 from __future__ import annotations
@@ -31,8 +24,7 @@ UTF8 = {"LC_CTYPE": "UTF-8"}  # pbcopy and pbpaste read and write text in the lo
 
 
 async def run(*argv: str, timeout: float = 30, input: bytes | None = None, env: dict[str, str] | None = None) -> str:
-    """The program's output; raises with its stderr if it fails. A program still running at the timeout is killed.
-    `env` adds to its environment."""
+    """Run argv and return stdout; raises with stderr on failure, kills it at `timeout`. `env` extends os.environ."""
     try:
         with fail_after(timeout):
             # stdin is the MCP stream when served over stdio, so a program gets none unless it's given input.

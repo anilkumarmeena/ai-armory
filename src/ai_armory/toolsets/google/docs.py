@@ -1,8 +1,4 @@
-"""Google Docs in the configured accounts: find by name and read as plain text (here), change (docs_write.py) and
-put images in (docs_images.py), all one tool set.
-
-Reading uses documents.readonly and the read-only Drive metadata for finding by name; nothing here changes a doc.
-"""
+"""Google Docs tool set: find and read docs as plain text here; edits in docs_write.py, images in docs_images.py."""
 
 from __future__ import annotations
 

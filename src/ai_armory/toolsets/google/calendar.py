@@ -1,12 +1,8 @@
-"""Google Calendar across the configured accounts: list and look up events, find free time (the user's own, and
-other people's free or busy times where their calendars are shared), add events to the user's own calendar, and
-change, delete or answer events.
+"""Google Calendar across the configured accounts: list events, find free time (incl. others' shared free/busy),
+add events, and change, delete or answer them.
 
-Whatever emails other people is done in two steps, a draft and then a second tool once the user says yes (see
-drafts.py): inviting people (calendar_draft_invite, calendar_send_invite), changing an event that has guests
-(calendar_draft_update, calendar_send_update) and answering an invite (calendar_draft_respond,
-calendar_send_response). Deleting an event is two steps too, guests or not (calendar_draft_delete,
-calendar_delete_event). An event with nobody else on it is changed straight away by calendar_update_event.
+Anything that emails other people is two-step (drafts.py): invites, changes to events with guests, and answering an
+invite. Deletes are always two-step. An event with no guests is changed directly by calendar_update_event.
 """
 
 from __future__ import annotations
