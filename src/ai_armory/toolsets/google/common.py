@@ -82,6 +82,26 @@ def token_path(label: str) -> Path:
     return settings().token_path(label)
 
 
+def _error_body(e: Exception) -> dict:
+    try:
+        return json.loads(getattr(e, "content", b""))["error"]
+    except (ValueError, KeyError, TypeError):
+        return {}
+
+
+def google_error(e: Exception) -> str:
+    """A Google API error as one plain sentence: Google's own message, not its JSON."""
+    if not (message := _error_body(e).get("message")):
+        return f"{type(e).__name__}: {e}"[:200]
+    return message.split(". ")[0].rstrip(".") + "."
+
+
+def error_reasons(e: Exception) -> set[str]:
+    """The machine-readable reasons in a Google API error (accessNotConfigured, notFound…)."""
+    body = _error_body(e)
+    return {x.get("reason", "") for x in [*body.get("errors", []), *body.get("details", [])] if isinstance(x, dict)}
+
+
 def write_private(path: Path, text: str) -> None:
     """Replaces `path` atomically with `text`, readable only by its owner: tokens and what sign-in found."""
     path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)

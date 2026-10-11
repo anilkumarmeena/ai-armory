@@ -235,6 +235,38 @@ toolsets = load_many(["google"])
 | `GoogleSettings.describe()` | A line on the accounts for the host's own prompt |
 | `ai_armory.toolsets.google.chat.news(label)` | The unread DMs and mentions, for the host's own alerts |
 
+### Sign in from your own web page
+
+A host with a web page of its own can sign accounts in **without a terminal**. `WebSignIns` keeps each begun sign-in by its one-time `state` (with PKCE), picks where Google sends it back, and finishes it. The host only serves two things: its page's actions, and one callback path.
+
+```python
+from ai_armory.toolsets.google.web import WebSignIns
+
+signins = WebSignIns(load_client_json, "/google/callback", port=8787, app="My host",
+                     on_done=lambda outcome: ...)  # e.g. store outcome.email
+
+started = signins.start("work", 0, origin="https://my-host.example")  # send the browser to started["url"]
+html = await signins.callback(request.query)  # serve this at /google/callback
+found = await signins.wait(started["state"])  # the page asks how it went
+```
+
+| OAuth client | Google sends the sign-in back to | From another device (a phone) |
+|---|---|---|
+| **Desktop app** | `http://127.0.0.1:<port><callback>` | The page doesn't load: paste its address into `finish_pasted` |
+| **Web application** | The page's own origin + callback | Finishes by itself; `setup(origin)` lists redirect URIs the client lacks |
+
+Begun sign-ins live in memory, so one process serves both the page and the callback. The steps underneath are public too, for hosts that keep sign-ins their own way:
+
+| Helper | Gives the host |
+|---|---|
+| `WebSignIns.setup` / `start` / `wait` / `callback` / `finish_pasted` | The whole web sign-in: client kind and redirect URIs, consent URL, waiting, the callback page, pasted addresses |
+| `auth.begin` / `auth.finish` | Google's consent URL (with PKCE) for a scope step, then the outcome: saved token, each API's check, a summary |
+| `auth.next_step(label, step)` | The narrower step to offer when a Workspace refuses Chat |
+| `checks.recheck(label, client)` | The same check later, e.g. after turning an API on, with no new sign-in |
+| `checks.apis(client)` | The APIs to turn on, each linking to its page in the client's project |
+| `signin_page.render(outcome, app=…)` | The page to show at the redirect URI, with each API's check |
+| `common.google_error(e)` | A Google API error as one plain sentence |
+
 ---
 
 <div align="center">
