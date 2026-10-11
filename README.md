@@ -9,7 +9,7 @@
 [![MCP](https://img.shields.io/badge/MCP-stdio%20%7C%20in--process-7c3aed?style=flat-square)](docs/serving.md)
 [![Claude Agent SDK](https://img.shields.io/badge/Claude%20Agent%20SDK-ready-d97706?style=flat-square)](docs/serving.md#-in-process-claude-agent-sdk)
 
-**[🔌 Serving](docs/serving.md)** &nbsp;·&nbsp; **[📬 Google](docs/google.md)** &nbsp;·&nbsp; **[🍎 Mac](docs/mac.md)** &nbsp;·&nbsp; **[🧩 Writing a tool set](docs/toolsets.md)**
+**[🔌 Serving](docs/serving.md)** &nbsp;·&nbsp; **[📬 Google](docs/google.md)** &nbsp;·&nbsp; **[🍎 Mac](docs/mac.md)** &nbsp;·&nbsp; **[🧩 Writing a tool set](docs/toolsets.md)** &nbsp;·&nbsp; **[🤝 Contributing](CONTRIBUTING.md)**
 
 </div>
 
@@ -127,9 +127,11 @@ flowchart TB
 > [!IMPORTANT]
 > Needs **Python 3.11+**. The `mac` tool set works only on macOS; the rest run anywhere.
 
-**1. Install** — everything, or just the extras you need:
+**1. Install** — clone, then install everything or just the [extras](#-install-extras) you need:
 
 ```sh
+git clone https://github.com/anilkumarmeena/ai-armory
+cd ai-armory
 pip install -e ".[all]"
 ```
 
@@ -230,6 +232,10 @@ pytest
 ```
 
 See **[🧩 Writing a tool set](docs/toolsets.md)** to add your own.
+
+## 🤝 Contributing
+
+Issues and pull requests are welcome. **[🤝 Contributing](CONTRIBUTING.md)** covers setup with uv, the checks, code style and what makes a pull request easy to merge.
 
 ## 📄 License
 

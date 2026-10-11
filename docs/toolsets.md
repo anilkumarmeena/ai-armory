@@ -83,6 +83,8 @@ pip install -e ".[dev]"
 pytest
 ```
 
+- Checks, code style and pull requests: **[🤝 Contributing](../CONTRIBUTING.md)**.
+
 ---
 
 <div align="center">
